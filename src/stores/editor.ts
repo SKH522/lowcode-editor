@@ -112,127 +112,113 @@ export const useEditorStore = defineStore('editor', () => {
   }
 
   // 尝试将组件移动到目标位置，如果遇到碰撞则推开其他组件
-  // 返回 { success, pushedIds } - success 表示是否成功（即使推开了组件也算成功）
+  // 推开方向由拖拽组件的移动方向决定，只沿一个方向推开
   const tryMoveWithPush = (
     movingId: string,
     targetPos: GridPosition
   ): { success: boolean; pushedIds: string[] } => {
     const COLS = GRID_CONFIG.COLS
+    const movingComp = findComponent(components.value, movingId)
 
-    // 记录所有组件当前占据的区域（排除正在移动的组件）
-    const occupiedById = new Map<string, GridPosition>()
+    if (!movingComp || !movingComp.gridPosition) {
+      return { success: false, pushedIds: [] }
+    }
+
+    // 计算移动方向
+    const origPos = movingComp.gridPosition
+    const dx = targetPos.x - origPos.x
+    const dy = targetPos.y - origPos.y
+
+    // 确定主要推动方向：水平为主还是垂直为主
+    const isHorizontal = Math.abs(dx) >= Math.abs(dy)
+
+    // 收集所有需要推送的组件及其推送位置
+    const pushes = new Map<string, GridPosition>()  // id -> 推送后的位置
+    const pushedIds: string[] = []
+
+    // 复制一份当前组件位置用于模拟
+    const simPositions = new Map<string, GridPosition>()
+    simPositions.set(movingId, { ...targetPos })
+
+    // 先把其他组件的位置记录下来
     for (const comp of components.value) {
       if (comp.id !== movingId && comp.gridPosition) {
-        occupiedById.set(comp.id, { ...comp.gridPosition })
+        simPositions.set(comp.id, { ...comp.gridPosition })
       }
     }
 
-    // 检查某位置是否与任何已占用区域重叠（排除指定ID）
-    const collidesWithOccupied = (pos: GridPosition, excludeId?: string): string | null => {
-      for (const [id, occ] of occupiedById) {
+    // 检查目标位置是否碰撞
+    const checkCollisionAt = (pos: GridPosition, excludeId?: string) => {
+      for (const [id, otherPos] of simPositions) {
         if (excludeId && id === excludeId) continue
 
         const noOverlap =
-          pos.x + pos.width <= occ.x ||
-          pos.x >= occ.x + occ.width ||
-          pos.y + pos.height <= occ.y ||
-          pos.y >= occ.y + occ.height
+          pos.x + pos.width <= otherPos.x ||
+          pos.x >= otherPos.x + otherPos.width ||
+          pos.y + pos.height <= otherPos.y ||
+          pos.y >= otherPos.y + otherPos.height
 
         if (!noOverlap) {
-          return id  // 返回碰撞到的组件ID
+          return id
         }
       }
       return null
     }
 
-    // 待处理的队列: [组件ID, 期望位置]
-    const queue: Array<{ id: string; pos: GridPosition }> = []
-    // 记录最终移动映射
-    const moves = new Map<string, GridPosition>()
+    // 如果目标位置有碰撞，计算推送
+    let colliderId = checkCollisionAt(targetPos, movingId)
 
-    // 从移动中的组件开始
-    const movingComp = findComponent(components.value, movingId)
-    if (!movingComp || !movingComp.gridPosition) {
-      return { success: false, pushedIds: [] }
-    }
-    queue.push({ id: movingId, pos: { ...targetPos } })
+    while (colliderId) {
+      const colliderPos = simPositions.get(colliderId)!
+      let newPos: GridPosition
 
-    // 推送失败时的标记
-    let pushFailed = false
-
-    while (queue.length > 0 && !pushFailed) {
-      const { id, pos } = queue.shift()!
-
-      // 跳过已经在 moves 中且位置不变的组件
-      const existingMove = moves.get(id)
-      if (existingMove && existingMove.x === pos.x && existingMove.y === pos.y) {
-        continue
-      }
-
-      // 边界检查
-      if (pos.x < 0 || pos.y < 0 || pos.x + pos.width > COLS || pos.y + pos.height > 999) {
-        pushFailed = true
-        break
-      }
-
-      // 检查位置是否冲突
-      const colliderId = collidesWithOccupied(pos, existingMove ? undefined : id)
-
-      if (!colliderId) {
-        // 无冲突，记录移动
-        moves.set(id, pos)
+      if (isHorizontal) {
+        // 水平推动：往右推
+        newPos = {
+          x: colliderPos.x + targetPos.width,
+          y: colliderPos.y,
+          width: colliderPos.width,
+          height: colliderPos.height
+        }
       } else {
-        // 有冲突，计算推送后的新位置
-        const collider = occupiedById.get(colliderId)!
-        let newPos: GridPosition
-
-        // 优先往右推
-        const pushedRight: GridPosition = {
-          x: pos.x + collider.width,
-          y: pos.y,
-          width: collider.width,
-          height: collider.height
-        }
-
-        // 如果右边超出网格，则往下推（回到该行最左）
-        if (pushedRight.x + collider.width > COLS) {
-          newPos = {
-            x: 0,
-            y: pos.y + pos.height,
-            width: collider.width,
-            height: collider.height
-          }
-        } else {
-          newPos = pushedRight
-        }
-
-        // 更新碰撞组件的记录位置
-        occupiedById.set(colliderId, newPos)
-
-        // 把碰撞到的组件加入队列（使用它原来的期望位置还是新位置？）
-        // 用新位置，这样它自己的冲突也能被检测到
-        queue.push({ id: colliderId, pos: newPos })
-
-        // 重新处理当前组件（因为碰撞组件已经移走了）
-        // 但要确保不形成无限循环：检查 moves 中是否有记录且位置变了
-        const currentInMoves = moves.get(id)
-        if (!currentInMoves || currentInMoves.x !== pos.x || currentInMoves.y !== pos.y) {
-          queue.push({ id, pos })
+        // 垂直推动：往下推
+        newPos = {
+          x: colliderPos.x,
+          y: colliderPos.y + targetPos.height,
+          width: colliderPos.width,
+          height: colliderPos.height
         }
       }
+
+      // 检查推送后是否超出边界
+      if (newPos.x < 0 || newPos.y < 0 || newPos.x + newPos.width > COLS) {
+        // 撞到边界，无法推送
+        return { success: false, pushedIds: [] }
+      }
+
+      // 检查推送后的位置是否与其他组件碰撞
+      const nextColliderId = checkCollisionAt(newPos, colliderId)
+
+      // 如果会撞到另一个组件（不是正在移动的组件），则无法推送
+      if (nextColliderId && nextColliderId !== movingId) {
+        return { success: false, pushedIds: [] }
+      }
+
+      // 记录推送
+      pushes.set(colliderId, newPos)
+      simPositions.set(colliderId, newPos)
+      pushedIds.push(colliderId)
+
+      // 继续检查目标位置是否还有碰撞（可能被推开的组件又撞回原位）
+      colliderId = checkCollisionAt(targetPos, movingId)
     }
 
-    if (pushFailed || moves.size === 0) {
-      return { success: false, pushedIds: [] }
-    }
-
-    // 批量执行移动
-    for (const [id, pos] of moves) {
+    // 执行移动
+    for (const [id, pos] of pushes) {
       moveComponentTo(id, pos)
     }
+    moveComponentTo(movingId, targetPos)
 
-    // 返回被推开的组件ID（排除移动者自身）
-    const pushedIds = Array.from(moves.keys()).filter(id => id !== movingId)
     return { success: true, pushedIds }
   }
 
