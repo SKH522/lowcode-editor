@@ -168,12 +168,12 @@ export const useEditorStore = defineStore('editor', () => {
       let newPos: GridPosition
 
       if (isHorizontal) {
-        // 水平推动：根据 dx 符号决定向左还是向右推
+        // 水平推动：保持被推组件原来的 y 坐标不变，只调整 x
         if (dx > 0) {
           // 从左往右 → 被推组件放到移动组件右边
           newPos = {
             x: targetPos.x + targetPos.width,
-            y: targetPos.y,
+            y: colliderPos.y,  // 保持原来的 y
             width: colliderPos.width,
             height: colliderPos.height
           }
@@ -181,7 +181,7 @@ export const useEditorStore = defineStore('editor', () => {
           // 从右往左 → 被推组件放到移动组件左边
           newPos = {
             x: targetPos.x - colliderPos.width,
-            y: targetPos.y,
+            y: colliderPos.y,  // 保持原来的 y
             width: colliderPos.width,
             height: colliderPos.height
           }
@@ -192,11 +192,11 @@ export const useEditorStore = defineStore('editor', () => {
           return { success: false, pushedIds: [] }
         }
       } else {
-        // 垂直推动：根据 dy 符号决定向上还是向下推
+        // 垂直推动：保持被推组件原来的 x 坐标不变，只调整 y
         if (dy > 0) {
           // 从上往下 → 被推组件放到移动组件下方
           newPos = {
-            x: targetPos.x,
+            x: colliderPos.x,  // 保持原来的 x
             y: targetPos.y + targetPos.height,
             width: colliderPos.width,
             height: colliderPos.height
@@ -204,7 +204,7 @@ export const useEditorStore = defineStore('editor', () => {
         } else {
           // 从下往上 → 被推组件放到移动组件上方
           newPos = {
-            x: targetPos.x,
+            x: colliderPos.x,  // 保持原来的 x
             y: targetPos.y - colliderPos.height,
             width: colliderPos.width,
             height: colliderPos.height
