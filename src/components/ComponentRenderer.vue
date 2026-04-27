@@ -3,11 +3,12 @@ import { computed, ref, watch, onMounted, onUnmounted, h } from 'vue'
 import { NButton, NInput, NCard } from 'naive-ui'
 import * as echarts from 'echarts'
 import { useEditorStore } from '@/stores/editor'
-import type { CanvasComponent } from '@/types/editor'
+import type { CanvasComponent, GridPosition } from '@/types/editor'
+import { GRID_CONFIG } from '@/types/editor'
 
 const props = defineProps<{
   component: CanvasComponent
-  index?: number
+  gridPosition?: GridPosition
 }>()
 
 const store = useEditorStore()
@@ -16,15 +17,85 @@ let chartInstance: echarts.ECharts | null = null
 
 const isSelected = computed(() => store.selectedId === props.component.id)
 
+// 拖拽状态
+const isDraggingSelf = ref(false)
+const isResizing = ref(false)
+const dragStartPos = ref({ x: 0, y: 0 })
+const componentStartPos = ref<GridPosition | null>(null)
+
+// 处理点击
 const handleClick = (e: MouseEvent) => {
   e.stopPropagation()
   store.selectComponent(props.component.id)
 }
 
+// 组件样式
 const styleObj = computed(() => ({
-  ...props.component.styles,
-  position: 'relative' as const
+  ...props.component.styles
 }))
+
+// 网格位置信息
+const positionInfo = computed(() => {
+  if (!props.gridPosition) return null
+  const { x, y, width, height } = props.gridPosition
+  return {
+    gridArea: `${y + 1} / ${x + 1} / span ${height} / span ${width}`,
+    label: `(${x + 1}, ${y + 1}) ${width}×${height}`
+  }
+})
+
+// 开始拖拽移动
+const onDragStart = (e: MouseEvent) => {
+  if (store.previewMode) return
+  e.stopPropagation()
+
+  isDraggingSelf.value = true
+  dragStartPos.value = { x: e.clientX, y: e.clientY }
+  componentStartPos.value = props.gridPosition ? { ...props.gridPosition } : null
+
+  document.addEventListener('mousemove', onDragMove)
+  document.addEventListener('mouseup', onDragEnd)
+}
+
+// 拖拽移动中
+const onDragMove = (e: MouseEvent) => {
+  if (!isDraggingSelf.value || !componentStartPos.value) return
+
+  const COLS = GRID_CONFIG.COLS
+  const ROW_HEIGHT = GRID_CONFIG.ROW_HEIGHT
+
+  // 计算鼠标偏移量对应的网格偏移
+  const canvasEl = document.querySelector('.components-grid')
+  if (!canvasEl) return
+
+  const rect = canvasEl.getBoundingClientRect()
+  const cellWidth = rect.width / COLS
+
+  const deltaX = e.clientX - dragStartPos.value.x
+  const deltaY = e.clientY - dragStartPos.value.y
+
+  const gridDeltaX = Math.round(deltaX / cellWidth)
+  const gridDeltaY = Math.round(deltaY / ROW_HEIGHT)
+
+  // 计算新位置
+  let newX = componentStartPos.value.x + gridDeltaX
+  let newY = componentStartPos.value.y + gridDeltaY
+
+  // 边界检查
+  newX = Math.max(0, Math.min(newX, COLS - componentStartPos.value.width))
+  newY = Math.max(0, newY)
+
+  // 更新位置
+  store.updateComponentPosition(props.component.id, { x: newX, y: newY })
+}
+
+// 拖拽结束
+const onDragEnd = () => {
+  isDraggingSelf.value = false
+  componentStartPos.value = null
+  document.removeEventListener('mousemove', onDragMove)
+  document.removeEventListener('mouseup', onDragEnd)
+}
 
 // 初始化图表
 const initChart = () => {
@@ -236,9 +307,14 @@ const renderContent = () => {
 <template>
   <div
     class="renderer-wrapper"
-    :class="{ selected: isSelected, 'has-children': component.children?.length }"
+    :class="{
+      selected: isSelected,
+      'is-dragging': isDraggingSelf,
+      'has-grid': !!gridPosition
+    }"
     :style="styleObj"
     @click="handleClick"
+    @mousedown="onDragStart"
   >
     <!-- 选中高亮边框 -->
     <div v-if="isSelected" class="selection-border"></div>
@@ -253,8 +329,14 @@ const renderContent = () => {
     </button>
 
     <!-- 拖拽手柄提示 -->
-    <div v-if="!store.previewMode" class="drag-handle">
-      ⋮⋮
+    <div v-if="!store.previewMode && gridPosition" class="drag-handle">
+      <span class="handle-icon">⋮⋮</span>
+      <span class="position-label">{{ gridPosition.x + 1 }}, {{ gridPosition.y + 1 }}</span>
+    </div>
+
+    <!-- 拖拽时显示尺寸 -->
+    <div v-if="isDraggingSelf && gridPosition" class="dragging-indicator">
+      {{ gridPosition.width }} × {{ gridPosition.height }}
     </div>
 
     <!-- 渲染内容 -->
@@ -273,10 +355,13 @@ const renderContent = () => {
 
 <style scoped>
 .renderer-wrapper {
-  padding: 8px;
-  margin: 4px;
+  /* 不设置 padding，让组件边框完全贴合网格单元格 */
   transition: all 0.15s ease;
   position: relative;
+  cursor: grab;
+  overflow: visible;  /* 允许边框元素超出 */
+  display: flex;
+  align-items: stretch;
 }
 
 .renderer-wrapper:hover {
@@ -287,20 +372,35 @@ const renderContent = () => {
   outline: 2px solid var(--accent);
 }
 
+.renderer-wrapper.is-dragging {
+  opacity: 0.8;
+  cursor: grabbing;
+  outline: 2px dashed #e94560 !important;
+  z-index: 100;
+}
+
+/* 内容区加 padding */
+.renderer-wrapper > *:not(.selection-border):not(.delete-btn):not(.drag-handle):not(.dragging-indicator) {
+  flex: 1;
+  padding: 8px;
+}
+
+/* 选中边框 - 叠加在组件上层 */
 .selection-border {
   position: absolute;
   inset: 0;
   border: 2px solid var(--accent);
-  border-radius: 4px;
   pointer-events: none;
+  z-index: 2;
 }
 
+/* 删除按钮 */
 .delete-btn {
   position: absolute;
-  top: -8px;
-  right: -8px;
-  width: 20px;
-  height: 20px;
+  top: -10px;
+  right: -10px;
+  width: 24px;
+  height: 24px;
   background: var(--accent);
   color: white;
   border: none;
@@ -309,7 +409,7 @@ const renderContent = () => {
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 12px;
+  font-size: 14px;
   line-height: 1;
   z-index: 10;
   transition: transform 0.15s;
@@ -319,30 +419,65 @@ const renderContent = () => {
   transform: scale(1.1);
 }
 
+/* 拖拽手柄 */
 .drag-handle {
   position: absolute;
   top: 50%;
-  left: -20px;
+  left: -24px;
   transform: translateY(-50%);
-  color: #ccc;
-  font-size: 12px;
-  cursor: grab;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  color: #999;
+  font-size: 10px;
   opacity: 0;
   transition: opacity 0.15s;
+  pointer-events: none;
+  z-index: 5;
 }
 
 .renderer-wrapper:hover .drag-handle {
   opacity: 1;
 }
 
-.drag-handle:active {
-  cursor: grabbing;
+.handle-icon {
+  font-size: 14px;
+  letter-spacing: -2px;
 }
 
+.position-label {
+  background: rgba(0, 0, 0, 0.7);
+  color: white;
+  padding: 2px 6px;
+  border-radius: 3px;
+  font-size: 10px;
+  white-space: nowrap;
+}
+
+/* 拖拽指示器 */
+.dragging-indicator {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  background: #e94560;
+  color: white;
+  padding: 6px 14px;
+  border-radius: 4px;
+  font-size: 13px;
+  font-weight: 500;
+  z-index: 101;
+  pointer-events: none;
+  box-shadow: 0 4px 16px rgba(233, 69, 96, 0.5);
+}
+
+/* 子组件容器 */
 .children-container {
   display: contents;
 }
 
+/* 输入框 */
 .input-wrapper {
   display: flex;
   flex-direction: column;
@@ -354,12 +489,15 @@ const renderContent = () => {
   color: #666;
 }
 
+/* 文本内容 */
 .text-content {
   word-break: break-word;
 }
 
+/* 图表容器 */
 .echarts-container {
   width: 100%;
-  height: 300px;
+  height: 100%;
+  min-height: 120px;
 }
 </style>

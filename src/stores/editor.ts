@@ -1,7 +1,7 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
-import type { CanvasComponent, EditorState } from '@/types/editor'
-import { COMPONENT_CONFIGS } from '@/types/editor'
+import type { CanvasComponent, EditorState, GridPosition } from '@/types/editor'
+import { COMPONENT_CONFIGS, GRID_CONFIG } from '@/types/editor'
 
 // 生成唯一 ID
 const generateId = () => `comp_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`
@@ -12,7 +12,9 @@ export const useEditorStore = defineStore('editor', () => {
   const selectedId = ref<string | null>(null)
   const previewMode = ref(false)
   const zoom = ref(100)
-  const dragOverIndex = ref<number>(-1) // 拖拽悬停位置
+  // 网格拖拽相关状态
+  const dragOverPosition = ref<GridPosition | null>(null)  // 拖拽悬停的网格位置
+  const isDraggingFromPanel = ref(false)  // 是否从面板拖入
 
   // Getters
   const selectedComponent = computed(() => {
@@ -32,7 +34,7 @@ export const useEditorStore = defineStore('editor', () => {
   }
 
   // Actions
-  const addComponent = (type: string, parentId?: string, insertIndex?: number) => {
+  const addComponent = (type: string, parentId?: string, gridPosition?: GridPosition) => {
     const config = COMPONENT_CONFIGS[type]
     if (!config) return
 
@@ -41,7 +43,14 @@ export const useEditorStore = defineStore('editor', () => {
       name: config.name,
       props: { ...config.defaultProps },
       styles: { ...config.styles },
-      children: type === 'container' || type === 'grid' ? [] : undefined
+      children: type === 'container' || type === 'grid' ? [] : undefined,
+      // 使用传入的网格位置或默认网格尺寸
+      gridPosition: gridPosition || {
+        x: 0,
+        y: getMaxGridY(),
+        width: config.gridSize?.width || 4,
+        height: config.gridSize?.height || 2
+      }
     }
 
     if (parentId) {
@@ -50,16 +59,64 @@ export const useEditorStore = defineStore('editor', () => {
         parent.children.push(newComponent)
       }
     } else {
-      // 如果指定了插入位置，插入到对应位置；否则添加到末尾
-      if (insertIndex !== undefined && insertIndex >= 0 && insertIndex <= components.value.length) {
-        components.value.splice(insertIndex, 0, newComponent)
-      } else {
-        components.value.push(newComponent)
-      }
+      components.value.push(newComponent)
     }
 
     selectedId.value = newComponent.id
     return newComponent
+  }
+
+  // 获取当前最大 Y 值，用于新组件的默认 Y 位置
+  const getMaxGridY = (): number => {
+    if (components.value.length === 0) return 0
+    let maxY = 0
+    for (const comp of components.value) {
+      if (comp.gridPosition) {
+        const bottom = comp.gridPosition.y + comp.gridPosition.height
+        if (bottom > maxY) maxY = bottom
+      }
+    }
+    return maxY
+  }
+
+  // 移动组件到指定网格位置
+  const moveComponentTo = (id: string, gridPosition: GridPosition) => {
+    const comp = findComponent(components.value, id)
+    if (comp) {
+      comp.gridPosition = { ...gridPosition }
+    }
+  }
+
+  // 更新组件网格位置
+  const updateComponentPosition = (id: string, updates: Partial<GridPosition>) => {
+    const comp = findComponent(components.value, id)
+    if (comp && comp.gridPosition) {
+      comp.gridPosition = { ...comp.gridPosition, ...updates }
+    }
+  }
+
+  // 清除组件网格位置
+  const clearComponentPosition = (id: string) => {
+    const comp = findComponent(components.value, id)
+    if (comp) {
+      comp.gridPosition = undefined
+    }
+  }
+
+  // 设置拖拽悬停位置
+  const setDragOverPosition = (position: GridPosition | null) => {
+    dragOverPosition.value = position
+  }
+
+  // 设置是否从面板拖入
+  const setDraggingFromPanel = (value: boolean) => {
+    isDraggingFromPanel.value = value
+  }
+
+  // 清空画布
+  const clearAll = () => {
+    components.value = []
+    selectedId.value = null
   }
 
   const removeComponent = (id: string) => {
@@ -111,28 +168,6 @@ export const useEditorStore = defineStore('editor', () => {
     zoom.value = Math.max(50, Math.min(150, value))
   }
 
-  const clearAll = () => {
-    components.value = []
-    selectedId.value = null
-  }
-
-  // 移动组件（用于拖拽排序）
-  const moveComponent = (fromIndex: number, toIndex: number) => {
-    if (fromIndex === toIndex) return
-    // 调整目标索引：如果是从前面移动到后面，toIndex 需要减 1
-    let adjustedToIndex = toIndex
-    if (fromIndex < toIndex) {
-      adjustedToIndex = toIndex - 1
-    }
-    const [removed] = components.value.splice(fromIndex, 1)
-    components.value.splice(adjustedToIndex, 0, removed)
-  }
-
-  // 设置拖拽悬停索引
-  const setDragOverIndex = (index: number) => {
-    dragOverIndex.value = index
-  }
-
   const exportConfig = () => {
     return JSON.stringify(components.value, null, 2)
   }
@@ -142,7 +177,8 @@ export const useEditorStore = defineStore('editor', () => {
     selectedId,
     previewMode,
     zoom,
-    dragOverIndex,
+    dragOverPosition,
+    isDraggingFromPanel,
     selectedComponent,
     addComponent,
     removeComponent,
@@ -152,8 +188,12 @@ export const useEditorStore = defineStore('editor', () => {
     togglePreview,
     setZoom,
     clearAll,
-    moveComponent,
-    setDragOverIndex,
+    moveComponentTo,
+    updateComponentPosition,
+    clearComponentPosition,
+    setDragOverPosition,
+    setDraggingFromPanel,
+    getMaxGridY,
     exportConfig
   }
 })

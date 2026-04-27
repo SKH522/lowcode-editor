@@ -1,179 +1,214 @@
 <script setup lang="ts">
-import { computed, ref, nextTick } from 'vue'
+import { computed, ref, onMounted, onUnmounted } from 'vue'
 import { NEmpty, NButton } from 'naive-ui'
 import { useEditorStore } from '@/stores/editor'
 import { useDrag } from '@/composables/useDrag'
 import ComponentRenderer from './ComponentRenderer.vue'
+import { GRID_CONFIG, COMPONENT_CONFIGS } from '@/types/editor'
+import type { GridPosition } from '@/types/editor'
 
 const store = useEditorStore()
 const { handleDragStart, handleDragEnd, handleDrop, isDragging, dragData } = useDrag()
 
-const isEmpty = computed(() => store.components.length === 0)
 const canvasInnerRef = ref<HTMLElement | null>(null)
-const componentRefs = ref<HTMLElement[]>([])
+const isEmpty = computed(() => store.components.length === 0)
 
-// 设置组件引用
-const setComponentRef = (el: any, index: number) => {
-  if (el) {
-    componentRefs.value[index] = el.$el || el
+// 网格尺寸配置
+const COLS = GRID_CONFIG.COLS
+const ROW_HEIGHT = GRID_CONFIG.ROW_HEIGHT
+const GAP = GRID_CONFIG.GAP
+
+// 计算画布总行数（根据内容动态扩展）
+const totalRows = computed(() => {
+  if (isEmpty.value) return 10
+  let maxRow = 0
+  for (const comp of store.components) {
+    if (comp.gridPosition) {
+      const bottom = comp.gridPosition.y + comp.gridPosition.height
+      if (bottom > maxRow) maxRow = bottom
+    }
+  }
+  return Math.max(maxRow + 4, 10)  // 至少10行，留点余量
+})
+
+// 生成列和行的网格线样式
+const gridStyle = computed(() => ({
+  '--cols': COLS,
+  '--rows': totalRows.value,
+  '--row-height': `${ROW_HEIGHT}px`,
+  '--gap': `${GAP}px`
+}))
+
+// 画布样式
+const canvasStyle = computed(() => ({
+  '--cols': COLS,
+  '--rows': totalRows.value,
+  '--row-height': `${ROW_HEIGHT}px`,
+  '--gap': `${GAP}px`
+}))
+
+// 计算组件的网格位置样式
+// 使用 x+1 / x+width+1 语法确保组件边缘对齐到格子边界线，而不是格子中心
+const getComponentStyle = (comp: any) => {
+  if (!comp.gridPosition) return {}
+  const { x, y, width, height } = comp.gridPosition
+  return {
+    gridColumn: `${x + 1} / ${x + width + 1}`,
+    gridRow: `${y + 1} / ${y + height + 1}`
   }
 }
 
-// 计算拖拽悬停位置 - 基于鼠标精确位置
-const updateDragOverIndex = (e: DragEvent) => {
-  if (!isDragging.value || !canvasInnerRef.value) return
+// 从鼠标位置计算网格坐标
+const getGridPositionFromMouse = (e: MouseEvent, componentWidth: number, componentHeight: number): GridPosition | null => {
+  if (!canvasInnerRef.value) return null
 
-  const canvasRect = canvasInnerRef.value.getBoundingClientRect()
-  const mouseY = e.clientY - canvasRect.top + canvasInnerRef.value.scrollTop
+  const rect = canvasInnerRef.value.getBoundingClientRect()
+  const scrollLeft = canvasInnerRef.value.scrollLeft
+  const scrollTop = canvasInnerRef.value.scrollTop
 
-  // 遍历组件找到正确的插入位置
-  let insertIndex = 0
+  const x = Math.floor((e.clientX - rect.left + scrollLeft) / (rect.width / COLS))
+  const y = Math.floor((e.clientY - rect.top + scrollTop) / ROW_HEIGHT)
 
-  for (let i = 0; i < store.components.length; i++) {
-    const el = componentRefs.value[i]
-    if (!el) {
-      insertIndex = i + 1
-      continue
-    }
+  // 边界检查
+  const maxX = COLS - componentWidth
+  const clampedX = Math.max(0, Math.min(x, maxX))
+  const clampedY = Math.max(0, y)
 
-    const rect = el.getBoundingClientRect()
-    const compTop = rect.top - canvasRect.top + canvasInnerRef.value.scrollTop
-    const compMiddle = compTop + rect.height / 2
-
-    if (mouseY < compMiddle) {
-      // 鼠标在这个组件的上半部分
-      insertIndex = i
-      break
-    } else {
-      // 鼠标在这个组件的下半部分，继续下一个
-      insertIndex = i + 1
-    }
+  return {
+    x: clampedX,
+    y: clampedY,
+    width: componentWidth,
+    height: componentHeight
   }
-
-  store.setDragOverIndex(insertIndex)
 }
 
+// 拖拽悬停位置样式
+const getDragOverStyle = () => {
+  if (!store.dragOverPosition) return {}
+  const { x, y, width, height } = store.dragOverPosition
+  return {
+    gridColumn: `${x + 1} / ${x + width + 1}`,
+    gridRow: `${y + 1} / ${y + height + 1}`
+  }
+}
+
+// 画布拖拽处理
 const onCanvasDragOver = (e: DragEvent) => {
   e.preventDefault()
-  updateDragOverIndex(e)
+  if (!isDragging.value) return
+
+  // 从拖拽数据获取组件尺寸
+  const type = dragData.value?.type
+  if (!type) return
+
+  const config = COMPONENT_CONFIGS[type]
+  if (!config?.gridSize) return
+
+  const { width, height } = config.gridSize
+  const position = getGridPositionFromMouse(e, width, height)
+
+  if (position) {
+    store.setDragOverPosition(position)
+  }
 }
 
+// 从面板拖入放下
 const onDrop = (e: DragEvent) => {
-  handleDrop(e, (type, name, sourceIndex) => {
-    if (sourceIndex !== undefined) {
-      // 画布内拖拽排序
-      const toIndex = store.dragOverIndex >= 0 ? store.dragOverIndex : store.components.length
-      store.moveComponent(sourceIndex, toIndex)
+  handleDrop(e, (type) => {
+    if (store.dragOverPosition) {
+      store.addComponent(type, undefined, store.dragOverPosition)
     } else {
-      // 从面板拖入新组件
-      const insertIndex = store.dragOverIndex >= 0 ? store.dragOverIndex : store.components.length
-      store.addComponent(type, undefined, insertIndex)
+      // 如果没有悬停位置，放在最后
+      store.addComponent(type)
     }
-    store.setDragOverIndex(-1)
+    store.setDragOverPosition(null)
+    store.setDraggingFromPanel(false)
   })
 }
 
-// 组件自身拖拽开始
-const onComponentDragStart = (e: DragEvent, index: number) => {
-  handleDragStart(e, store.components[index].name, store.components[index].name, index)
-}
-
-// 组件拖拽结束
-const onComponentDragEnd = () => {
-  handleDragEnd()
-  store.setDragOverIndex(-1)
-}
-
-// 判断是否应该显示某个位置的插入指示器
-const shouldShowIndicator = (position: 'before' | 'after', index: number) => {
-  if (!isDragging.value) return false
-
-  const currentIndex = store.dragOverIndex
-  const sourceIndex = dragData.value?.sourceIndex
-
-  if (position === 'before') {
-    // 在某个组件之前显示指示器
-    // 情况1: 插入位置是 0，且当前遍历到 index 0
-    // 情况2: 插入位置是 index，且不是源组件自身
-    if (currentIndex === 0 && index === 0) return true
-    if (currentIndex === index && currentIndex !== sourceIndex) return true
-    // 情况3: 插入位置在 index-1 之后，即在 index 之前
-    if (currentIndex === index && sourceIndex !== undefined && sourceIndex < index) return true
+// 拖拽到画布边缘
+const onCanvasDragLeave = (e: DragEvent) => {
+  // 只有真正离开画布时才清除
+  if (!canvasInnerRef.value?.contains(e.relatedTarget as Node)) {
+    store.setDragOverPosition(null)
   }
-
-  if (position === 'after') {
-    // 在某个组件之后显示指示器
-    // 情况1: 插入位置是最后一个 (components.length)
-    if (currentIndex === store.components.length && index === store.components.length - 1) return true
-    // 情况2: 插入位置是 index+1
-    if (currentIndex === index + 1) return true
-  }
-
-  return false
 }
 
-// 判断组件是否被选中（作为拖拽源）
-const isDraggingSource = (index: number) => {
-  return dragData.value?.sourceIndex === index
-}
+// 生成网格列和行的索引
+const gridIndices = computed(() => ({
+  cols: Array.from({ length: COLS }, (_, i) => i),
+  rows: Array.from({ length: totalRows.value }, (_, i) => i)
+}))
 </script>
 
 <template>
   <div class="canvas-container">
     <div
+      ref="canvasInnerRef"
       class="canvas-wrapper"
       :class="{ 'preview-mode': store.previewMode, 'is-dragging': isDragging }"
-      :style="{ transform: `scale(${store.zoom / 100})` }"
+      :style="canvasStyle"
       @dragover="onCanvasDragOver"
       @drop="onDrop"
+      @dragleave="onCanvasDragLeave"
     >
-      <div ref="canvasInnerRef" class="canvas-inner">
-        <!-- 空状态提示 -->
-        <div v-if="isEmpty && !store.previewMode" class="empty-state">
-          <NEmpty description="拖拽组件到此处开始编辑">
-            <template #extra>
-              <NButton size="small" type="primary" @click="store.addComponent('container')">
-                添加容器
-              </NButton>
-            </template>
-          </NEmpty>
-        </div>
-
-        <!-- 拖拽到空画布的指示器 -->
-        <div
-          v-if="isDragging && isEmpty"
-          class="empty-drop-indicator"
-        >
-          释放在此处
-        </div>
-
-        <!-- 渲染组件列表 -->
-        <template v-for="(comp, index) in store.components" :key="comp.id">
-          <!-- 组件上方的插入指示器 -->
+      <!-- 网格背景 - 使用 Grid 布局与 components-grid 完全对齐 -->
+      <div class="grid-background" :style="gridStyle">
+        <!-- 网格单元格 - 使用 Grid 布局 -->
+        <div class="grid-cells">
           <div
-            v-if="isDragging && store.dragOverIndex === index"
-            class="insert-indicator"
-          ></div>
+            v-for="row in gridIndices.rows"
+            :key="'row-' + row"
+            class="grid-row"
+          >
+            <div
+              v-for="col in gridIndices.cols"
+              :key="'cell-' + row + '-' + col"
+              class="grid-cell"
+            />
+          </div>
+        </div>
+      </div>
 
-          <ComponentRenderer
-            :ref="(el) => setComponentRef(el, index)"
-            :component="comp"
-            :index="index"
-            :class="{ 'is-dragging-source': isDraggingSource(index) }"
-            :draggable="!store.previewMode"
-            @dragstart="(e: DragEvent) => onComponentDragStart(e, index)"
-            @dragend="onComponentDragEnd"
-          />
+      <!-- 空状态提示 -->
+      <div v-if="isEmpty && !store.previewMode" class="empty-state">
+        <NEmpty description="拖拽组件到网格开始编辑">
+          <template #extra>
+            <NButton size="small" type="primary" @click="store.addComponent('container')">
+              添加容器
+            </NButton>
+          </template>
+        </NEmpty>
+      </div>
 
-          <!-- 如果是最后一个组件，且拖拽到末尾 -->
-          <div
-            v-if="isDragging && index === store.components.length - 1 && store.dragOverIndex === store.components.length"
-            class="insert-indicator"
-          ></div>
-        </template>
+      <!-- 组件网格容器 -->
+      <div class="components-grid">
+        <ComponentRenderer
+          v-for="comp in store.components"
+          :key="comp.id"
+          :component="comp"
+          :style="getComponentStyle(comp)"
+          :grid-position="comp.gridPosition"
+        />
+      </div>
 
-        <!-- 当 dragOverIndex 为 0 但列表为空时不显示，放在空状态处理了 -->
+      <!-- 拖拽悬停指示器 -->
+      <div
+        v-if="isDragging && store.dragOverPosition"
+        class="drag-over-indicator"
+        :style="getDragOverStyle()"
+      >
+        <span class="indicator-label">
+          {{ store.dragOverPosition.width }} × {{ store.dragOverPosition.height }}
+        </span>
+      </div>
 
+      <!-- 拖拽到空画布的指示器 -->
+      <div
+        v-if="isDragging && isEmpty"
+        class="empty-drop-indicator"
+      >
+        释放到网格上
       </div>
     </div>
 
@@ -197,79 +232,134 @@ const isDraggingSource = (index: number) => {
 .canvas-wrapper {
   flex: 1;
   overflow: auto;
-  display: flex;
-  justify-content: center;
-  padding: 24px;
+  padding: 12px;
   transform-origin: top center;
   transition: transform 0.2s ease;
-}
-
-.canvas-inner {
-  width: 100%;
-  max-width: 800px;
-  min-height: 600px;
-  background: #ffffff;
-  border-radius: 8px;
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
   position: relative;
-  overflow: hidden;
+  background: #1e1e2a;
 }
 
+/* 网格背景 - 使用 Grid 布局与 components-grid 完全对齐 */
+.grid-background {
+  position: absolute;
+  inset: 12px;
+  display: grid;
+  grid-template-rows: repeat(var(--rows), var(--row-height));
+  gap: var(--gap);
+  pointer-events: none;
+  z-index: 0;
+}
+
+.grid-cells {
+  display: contents;
+}
+
+.grid-row {
+  display: grid;
+  grid-template-columns: repeat(var(--cols), 1fr);
+  gap: var(--gap);
+  height: var(--row-height);
+}
+
+.grid-cell {
+  outline: 1px solid rgba(255, 255, 255, 0.05);
+  border-radius: 2px;
+  transition: background 0.15s;
+}
+
+.grid-cell:hover {
+  background: rgba(255, 255, 255, 0.03);
+}
+
+/* 组件网格容器 - 使用固定行数与背景网格完全对齐 */
+.components-grid {
+  position: absolute;
+  inset: 12px;
+  display: grid;
+  grid-template-columns: repeat(var(--cols), 1fr);
+  grid-template-rows: repeat(var(--rows), var(--row-height));
+  gap: var(--gap);
+  z-index: 1;
+}
+
+/* 空状态 */
 .empty-state {
   position: absolute;
   top: 50%;
   left: 50%;
   transform: translate(-50%, -50%);
   text-align: center;
+  z-index: 10;
 }
 
-.preview-mode .canvas-inner {
-  max-width: none;
-  border-radius: 0;
-  box-shadow: none;
+/* 预览模式 */
+.preview-mode .grid-background {
+  display: none;
 }
 
-.is-dragging {
-  background: #3d3d4a;
+.preview-mode .canvas-wrapper {
+  background: #1a1a24;
+  border-radius: 8px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
 }
 
-.zoom-hint {
-  position: absolute;
-  bottom: 16px;
-  right: 16px;
-  background: rgba(0, 0, 0, 0.6);
-  color: white;
-  padding: 4px 12px;
-  border-radius: 4px;
-  font-size: 12px;
-}
-
-/* 拖拽指示器样式 */
-.insert-indicator {
-  height: 4px;
-  background: linear-gradient(90deg, #e94560, #ff6b8a);
-  border-radius: 2px;
-  margin: 4px 8px;
-  animation: insertPulse 0.5s ease-in-out infinite;
-  box-shadow: 0 0 12px rgba(233, 69, 96, 0.6);
+.preview-mode .components-grid {
   position: relative;
-  z-index: 100;
+  inset: auto;
+  padding: 16px;
+  background: #252532;
+  border-radius: 6px;
+  min-height: 100%;
 }
 
-@keyframes insertPulse {
+/* 拖拽状态 */
+.is-dragging {
+  background: #252532;
+}
+
+.is-dragging .grid-cell {
+  background: rgba(233, 69, 96, 0.08);
+  border-color: rgba(233, 69, 96, 0.2);
+}
+
+/* 拖拽悬停指示器 */
+.drag-over-indicator {
+  position: absolute;
+  background: rgba(233, 69, 96, 0.2);
+  border: 2px dashed #e94560;
+  border-radius: 8px;
+  z-index: 50;
+  pointer-events: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  animation: indicatorPulse 0.5s ease-in-out infinite;
+}
+
+.indicator-label {
+  background: #e94560;
+  color: white;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 500;
+}
+
+@keyframes indicatorPulse {
   0%, 100% {
     opacity: 1;
-    transform: scaleX(1);
+    transform: scale(1);
   }
   50% {
-    opacity: 0.7;
-    transform: scaleX(0.98);
+    opacity: 0.8;
+    transform: scale(0.98);
   }
 }
 
+/* 空画布拖拽提示 */
 .empty-drop-indicator {
   position: absolute;
-  inset: 0;
+  inset: 12px;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -279,6 +369,7 @@ const isDraggingSource = (index: number) => {
   color: #e94560;
   font-size: 16px;
   font-weight: 500;
+  z-index: 100;
   pointer-events: none;
   animation: borderPulse 1s ease-in-out infinite;
 }
@@ -294,19 +385,29 @@ const isDraggingSource = (index: number) => {
   }
 }
 
-/* 被拖拽的源组件样式 */
-.is-dragging-source {
-  opacity: 0.4;
-  outline: 2px dashed #e94560 !important;
+/* 缩放提示 */
+.zoom-hint {
+  position: absolute;
+  bottom: 16px;
+  right: 16px;
+  background: rgba(0, 0, 0, 0.6);
+  color: white;
+  padding: 4px 12px;
+  border-radius: 4px;
+  font-size: 12px;
 }
 
 /* 响应式 */
 @media (max-width: 768px) {
   .canvas-wrapper {
-    padding: 12px;
+    padding: 8px;
   }
-  .canvas-inner {
-    min-height: 400px;
+  .grid-background,
+  .components-grid {
+    inset: 8px;
+  }
+  .empty-drop-indicator {
+    inset: 8px;
   }
 }
 </style>
