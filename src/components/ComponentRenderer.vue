@@ -7,6 +7,7 @@ import type { CanvasComponent } from '@/types/editor'
 
 const props = defineProps<{
   component: CanvasComponent
+  index?: number
 }>()
 
 const store = useEditorStore()
@@ -251,10 +252,13 @@ const renderContent = () => {
       ✕
     </button>
 
+    <!-- 拖拽手柄提示 -->
+    <div v-if="!store.previewMode" class="drag-handle">
+      ⋮⋮
+    </div>
+
     <!-- 渲染内容 -->
-    <slot>
-      <component :is="renderContent" />
-    </slot>
+    <component :is="renderContent" />
 
     <!-- 子组件插槽 -->
     <div v-if="component.children?.length" class="children-container">
@@ -272,6 +276,7 @@ const renderContent = () => {
   padding: 8px;
   margin: 4px;
   transition: all 0.15s ease;
+  position: relative;
 }
 
 .renderer-wrapper:hover {
@@ -312,6 +317,26 @@ const renderContent = () => {
 
 .delete-btn:hover {
   transform: scale(1.1);
+}
+
+.drag-handle {
+  position: absolute;
+  top: 50%;
+  left: -20px;
+  transform: translateY(-50%);
+  color: #ccc;
+  font-size: 12px;
+  cursor: grab;
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+
+.renderer-wrapper:hover .drag-handle {
+  opacity: 1;
+}
+
+.drag-handle:active {
+  cursor: grabbing;
 }
 
 .children-container {

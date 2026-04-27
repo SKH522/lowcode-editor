@@ -12,6 +12,7 @@ export const useEditorStore = defineStore('editor', () => {
   const selectedId = ref<string | null>(null)
   const previewMode = ref(false)
   const zoom = ref(100)
+  const dragOverIndex = ref<number>(-1) // 拖拽悬停位置
 
   // Getters
   const selectedComponent = computed(() => {
@@ -31,7 +32,7 @@ export const useEditorStore = defineStore('editor', () => {
   }
 
   // Actions
-  const addComponent = (type: string, parentId?: string) => {
+  const addComponent = (type: string, parentId?: string, insertIndex?: number) => {
     const config = COMPONENT_CONFIGS[type]
     if (!config) return
 
@@ -49,7 +50,12 @@ export const useEditorStore = defineStore('editor', () => {
         parent.children.push(newComponent)
       }
     } else {
-      components.value.push(newComponent)
+      // 如果指定了插入位置，插入到对应位置；否则添加到末尾
+      if (insertIndex !== undefined && insertIndex >= 0 && insertIndex <= components.value.length) {
+        components.value.splice(insertIndex, 0, newComponent)
+      } else {
+        components.value.push(newComponent)
+      }
     }
 
     selectedId.value = newComponent.id
@@ -110,6 +116,23 @@ export const useEditorStore = defineStore('editor', () => {
     selectedId.value = null
   }
 
+  // 移动组件（用于拖拽排序）
+  const moveComponent = (fromIndex: number, toIndex: number) => {
+    if (fromIndex === toIndex) return
+    // 调整目标索引：如果是从前面移动到后面，toIndex 需要减 1
+    let adjustedToIndex = toIndex
+    if (fromIndex < toIndex) {
+      adjustedToIndex = toIndex - 1
+    }
+    const [removed] = components.value.splice(fromIndex, 1)
+    components.value.splice(adjustedToIndex, 0, removed)
+  }
+
+  // 设置拖拽悬停索引
+  const setDragOverIndex = (index: number) => {
+    dragOverIndex.value = index
+  }
+
   const exportConfig = () => {
     return JSON.stringify(components.value, null, 2)
   }
@@ -119,6 +142,7 @@ export const useEditorStore = defineStore('editor', () => {
     selectedId,
     previewMode,
     zoom,
+    dragOverIndex,
     selectedComponent,
     addComponent,
     removeComponent,
@@ -128,6 +152,8 @@ export const useEditorStore = defineStore('editor', () => {
     togglePreview,
     setZoom,
     clearAll,
+    moveComponent,
+    setDragOverIndex,
     exportConfig
   }
 })
