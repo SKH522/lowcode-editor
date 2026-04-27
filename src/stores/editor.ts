@@ -112,7 +112,7 @@ export const useEditorStore = defineStore('editor', () => {
   }
 
   // 尝试将组件移动到目标位置，如果遇到碰撞则推开其他组件
-  // 推送方向由用户拖拽方向决定，被推的组件紧贴在移动组件边缘
+  // 推送方向与拖拽方向一致，被推组件紧贴在移动组件的移动方向一侧
   const tryMoveWithPush = (
     movingId: string,
     targetPos: GridPosition
@@ -128,14 +128,14 @@ export const useEditorStore = defineStore('editor', () => {
     const dx = targetPos.x - origPos.x
     const dy = targetPos.y - origPos.y
 
-    // 确定主要推动方向
+    // 确定主要推动方向（根据 dx/dy 的符号）
     const isHorizontal = Math.abs(dx) >= Math.abs(dy)
 
     // 收集需要推送的组件
-    const pushes = new Map<string, GridPosition>()
     const pushedIds: string[] = []
+    const colliders: Array<{ id: string; movedPos: GridPosition }> = []
 
-    // 模拟位置：移动组件的目标位置 + 其他组件的当前位置
+    // 模拟位置
     const simPositions = new Map<string, GridPosition>()
     simPositions.set(movingId, { ...targetPos })
     for (const comp of components.value) {
@@ -144,7 +144,6 @@ export const useEditorStore = defineStore('editor', () => {
       }
     }
 
-    // 检查某位置是否与某组件碰撞
     const checkCollisionAt = (pos: GridPosition, excludeId?: string) => {
       for (const [id, otherPos] of simPositions) {
         if (excludeId && id === excludeId) continue
@@ -163,21 +162,29 @@ export const useEditorStore = defineStore('editor', () => {
     }
 
     // 收集所有与目标位置碰撞的组件
-    const colliders: Array<{ id: string; pos: GridPosition; movedPos: GridPosition }> = []
-
-    // 检查目标位置是否碰撞
     let colliderId = checkCollisionAt(targetPos, movingId)
     while (colliderId) {
       const colliderPos = simPositions.get(colliderId)!
       let newPos: GridPosition
 
       if (isHorizontal) {
-        // 水平推动：被推组件紧贴在移动组件右边
-        newPos = {
-          x: targetPos.x + targetPos.width,
-          y: targetPos.y,
-          width: colliderPos.width,
-          height: colliderPos.height
+        // 水平推动：根据 dx 符号决定向左还是向右推
+        if (dx > 0) {
+          // 从左往右 → 被推组件放到移动组件右边
+          newPos = {
+            x: targetPos.x + targetPos.width,
+            y: targetPos.y,
+            width: colliderPos.width,
+            height: colliderPos.height
+          }
+        } else {
+          // 从右往左 → 被推组件放到移动组件左边
+          newPos = {
+            x: targetPos.x - colliderPos.width,
+            y: targetPos.y,
+            width: colliderPos.width,
+            height: colliderPos.height
+          }
         }
 
         // 边界检查
@@ -185,12 +192,23 @@ export const useEditorStore = defineStore('editor', () => {
           return { success: false, pushedIds: [] }
         }
       } else {
-        // 垂直推动：被推组件紧贴在移动组件下方
-        newPos = {
-          x: targetPos.x,
-          y: targetPos.y + targetPos.height,
-          width: colliderPos.width,
-          height: colliderPos.height
+        // 垂直推动：根据 dy 符号决定向上还是向下推
+        if (dy > 0) {
+          // 从上往下 → 被推组件放到移动组件下方
+          newPos = {
+            x: targetPos.x,
+            y: targetPos.y + targetPos.height,
+            width: colliderPos.width,
+            height: colliderPos.height
+          }
+        } else {
+          // 从下往上 → 被推组件放到移动组件上方
+          newPos = {
+            x: targetPos.x,
+            y: targetPos.y - colliderPos.height,
+            width: colliderPos.width,
+            height: colliderPos.height
+          }
         }
 
         // 边界检查
@@ -199,14 +217,13 @@ export const useEditorStore = defineStore('editor', () => {
         }
       }
 
-      // 检查被推后是否与其他组件碰撞（形成连锁）
+      // 检查推送后是否与其他组件碰撞
       const nextColliderId = checkCollisionAt(newPos, colliderId)
       if (nextColliderId) {
-        // 连锁碰撞，无法推送
         return { success: false, pushedIds: [] }
       }
 
-      colliders.push({ id: colliderId, pos: colliderPos, movedPos: newPos })
+      colliders.push({ id: colliderId, movedPos: newPos })
       simPositions.set(colliderId, newPos)
       pushedIds.push(colliderId)
 
