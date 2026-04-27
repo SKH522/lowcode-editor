@@ -20,6 +20,7 @@ const isSelected = computed(() => store.selectedId === props.component.id)
 // 拖拽状态
 const isDraggingSelf = ref(false)
 const isResizing = ref(false)
+const isColliding = ref(false)  // 是否与其他组件碰撞
 const dragStartPos = ref({ x: 0, y: 0 })
 const componentStartPos = ref<GridPosition | null>(null)
 
@@ -57,7 +58,7 @@ const onDragStart = (e: MouseEvent) => {
   document.addEventListener('mouseup', onDragEnd)
 }
 
-// 拖拽移动中
+  // 拖拽移动中
 const onDragMove = (e: MouseEvent) => {
   if (!isDraggingSelf.value || !componentStartPos.value) return
 
@@ -85,13 +86,21 @@ const onDragMove = (e: MouseEvent) => {
   newX = Math.max(0, Math.min(newX, COLS - componentStartPos.value.width))
   newY = Math.max(0, newY)
 
-  // 更新位置
-  store.updateComponentPosition(props.component.id, { x: newX, y: newY })
+  // 碰撞检测
+  const newPosition = { x: newX, y: newY, width: componentStartPos.value.width, height: componentStartPos.value.height }
+  const hasCollision = store.checkCollision(newPosition, props.component.id)
+  isColliding.value = hasCollision
+
+  // 只有没有碰撞时才更新位置
+  if (!hasCollision) {
+    store.updateComponentPosition(props.component.id, { x: newX, y: newY })
+  }
 }
 
 // 拖拽结束
 const onDragEnd = () => {
   isDraggingSelf.value = false
+  isColliding.value = false
   componentStartPos.value = null
   document.removeEventListener('mousemove', onDragMove)
   document.removeEventListener('mouseup', onDragEnd)
@@ -317,7 +326,8 @@ const renderContent = () => {
     :class="{
       selected: isSelected,
       'is-dragging': isDraggingSelf,
-      'has-grid': !!gridPosition
+      'has-grid': !!gridPosition,
+      'is-colliding': isColliding
     }"
     :style="styleObj"
     @click="handleClick"
@@ -384,6 +394,12 @@ const renderContent = () => {
   cursor: grabbing;
   outline: 2px dashed #e94560 !important;
   z-index: 100;
+}
+
+/* 碰撞状态 - 红色边框提示 */
+.renderer-wrapper.is-colliding {
+  outline: 2px dashed #ff4444 !important;
+  background: rgba(255, 68, 68, 0.1);
 }
 
 /* 内容区加 padding，但图表容器例外 */

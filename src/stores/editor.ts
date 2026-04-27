@@ -79,6 +79,38 @@ export const useEditorStore = defineStore('editor', () => {
     return maxY
   }
 
+  // 碰撞检测：检查给定位置是否与现有组件重叠
+  // excludeId - 拖拽中的组件自身 ID，应该排除它自己的当前位置
+  const checkCollision = (gridPosition: GridPosition, excludeId?: string): boolean => {
+    const { x, y, width, height } = gridPosition
+
+    for (const comp of components.value) {
+      // 排除自己
+      if (excludeId && comp.id === excludeId) continue
+
+      if (comp.gridPosition) {
+        const compX = comp.gridPosition.x
+        const compY = comp.gridPosition.y
+        const compW = comp.gridPosition.width
+        const compH = comp.gridPosition.height
+
+        // 检测两个矩形是否重叠
+        // 不重叠的条件：完全在左边 | 完全在右边 | 完全在上边 | 完全在下边
+        const noOverlap =
+          x + width <= compX ||      // A 在 B 左边
+          x >= compX + compW ||      // A 在 B 右边
+          y + height <= compY ||    // A 在 B 上边
+          y >= compY + compH        // A 在 B 下边
+
+        // 如果不是完全不重叠，则说明有碰撞
+        if (!noOverlap) {
+          return true
+        }
+      }
+    }
+    return false
+  }
+
   // 移动组件到指定网格位置
   const moveComponentTo = (id: string, gridPosition: GridPosition) => {
     const comp = findComponent(components.value, id)
@@ -194,6 +226,7 @@ export const useEditorStore = defineStore('editor', () => {
     setDragOverPosition,
     setDraggingFromPanel,
     getMaxGridY,
+    checkCollision,
     exportConfig
   }
 })

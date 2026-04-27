@@ -116,7 +116,13 @@ const onCanvasDragOver = (e: DragEvent) => {
 const onDrop = (e: DragEvent) => {
   handleDrop(e, (type) => {
     if (store.dragOverPosition) {
-      store.addComponent(type, undefined, store.dragOverPosition)
+      // 碰撞检测：检查放置位置是否被占用
+      if (!store.checkCollision(store.dragOverPosition)) {
+        store.addComponent(type, undefined, store.dragOverPosition)
+      } else {
+        // 碰撞了，不放置
+        console.warn('该位置已被占用')
+      }
     } else {
       // 如果没有悬停位置，放在最后
       store.addComponent(type)
