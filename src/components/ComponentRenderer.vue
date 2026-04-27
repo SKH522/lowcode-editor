@@ -116,11 +116,15 @@ const updateChart = () => {
   const { name, props: p } = props.component
   let option: echarts.EChartsOption = {}
 
+  // 图表网格配置 - 让内容贴边
+  const gridConfig = { top: 20, left: 20, right: 20, bottom: 20, containLabel: true }
+
   switch (name) {
     case '折线图':
       option = {
         title: { text: p.title, left: 'center', textStyle: { fontSize: 14 } },
         tooltip: { trigger: 'axis' },
+        grid: gridConfig,
         xAxis: { type: 'category', data: p.xData },
         yAxis: { type: 'value' },
         series: [{
@@ -136,6 +140,7 @@ const updateChart = () => {
       option = {
         title: { text: p.title, left: 'center', textStyle: { fontSize: 14 } },
         tooltip: { trigger: 'axis' },
+        grid: gridConfig,
         xAxis: { type: 'category', data: p.xData },
         yAxis: { type: 'value' },
         series: [{
@@ -153,6 +158,7 @@ const updateChart = () => {
         series: [{
           type: 'pie',
           radius: '60%',
+          center: ['50%', '50%'],
           data: p.data,
           emphasis: {
             itemStyle: {
@@ -169,6 +175,7 @@ const updateChart = () => {
       option = {
         title: { text: p.title, left: 'center', textStyle: { fontSize: 14 } },
         tooltip: { trigger: 'item' },
+        grid: gridConfig,
         xAxis: { type: 'value', scale: true },
         yAxis: { type: 'value', scale: true },
         series: [{
@@ -187,7 +194,7 @@ const updateChart = () => {
           type: 'gauge',
           startAngle: 180,
           endAngle: 0,
-          center: ['50%', '75%'],
+          center: ['50%', '60%'],
           radius: '90%',
           min: 0,
           max: p.max || 100,
@@ -379,10 +386,17 @@ const renderContent = () => {
   z-index: 100;
 }
 
-/* 内容区加 padding */
-.renderer-wrapper > *:not(.selection-border):not(.delete-btn):not(.drag-handle):not(.dragging-indicator) {
+/* 内容区加 padding，但图表容器例外 */
+.renderer-wrapper > *:not(.selection-border):not(.delete-btn):not(.drag-handle):not(.dragging-indicator):not(.echarts-container) {
   flex: 1;
   padding: 8px;
+}
+
+/* 图表容器填满整个空间 */
+.renderer-wrapper > .echarts-container {
+  flex: 1;
+  width: 100%;
+  height: 100%;
 }
 
 /* 选中边框 - 叠加在组件上层 */

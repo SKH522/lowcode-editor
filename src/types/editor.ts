@@ -100,7 +100,7 @@ export const COMPONENT_CONFIGS: Record<string, ComponentConfig> = {
     styles: { display: 'grid' },
     gridSize: { width: 12, height: 4 }  // 12列4行
   },
-  // ECharts 图表组件
+  // ECharts 图表组件 - 不设置固定高度，让它填满网格
   lineChart: {
     name: '折线图',
     icon: '📈',
@@ -110,7 +110,7 @@ export const COMPONENT_CONFIGS: Record<string, ComponentConfig> = {
       yData: [820, 932, 901, 934, 1290, 1330, 1320],
       smooth: true
     },
-    styles: { width: '100%', height: '300px' },
+    styles: { width: '100%' },
     gridSize: { width: 6, height: 4 }  // 6列4行
   },
   barChart: {
@@ -121,7 +121,7 @@ export const COMPONENT_CONFIGS: Record<string, ComponentConfig> = {
       xData: ['衬衫', '羊毛衫', '雪纺衫', '裤子', '高跟鞋', '袜子'],
       yData: [5, 20, 36, 10, 10, 20]
     },
-    styles: { width: '100%', height: '300px' },
+    styles: { width: '100%' },
     gridSize: { width: 6, height: 4 }  // 6列4行
   },
   pieChart: {
@@ -137,7 +137,7 @@ export const COMPONENT_CONFIGS: Record<string, ComponentConfig> = {
         { name: '搜索引擎', value: 1548 }
       ]
     },
-    styles: { width: '100%', height: '300px' },
+    styles: { width: '100%' },
     gridSize: { width: 4, height: 4 }  // 4列4行
   },
   scatterChart: {
@@ -151,7 +151,7 @@ export const COMPONENT_CONFIGS: Record<string, ComponentConfig> = {
         [5, 5.68]
       ]
     },
-    styles: { width: '100%', height: '300px' },
+    styles: { width: '100%' },
     gridSize: { width: 5, height: 4 }  // 5列4行
   },
   gaugeChart: {
@@ -163,7 +163,7 @@ export const COMPONENT_CONFIGS: Record<string, ComponentConfig> = {
       max: 100,
       unit: '%'
     },
-    styles: { width: '100%', height: '300px' },
+    styles: { width: '100%' },
     gridSize: { width: 3, height: 3 }  // 3列3行
   }
 }
