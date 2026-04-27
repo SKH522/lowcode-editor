@@ -20,7 +20,7 @@ const isSelected = computed(() => store.selectedId === props.component.id)
 // 拖拽状态
 const isDraggingSelf = ref(false)
 const isResizing = ref(false)
-const isColliding = ref(false)  // 是否与其他组件碰撞
+const isPushing = ref(false)  // 是否在推开其他组件
 const dragStartPos = ref({ x: 0, y: 0 })
 const componentStartPos = ref<GridPosition | null>(null)
 
@@ -86,13 +86,29 @@ const onDragMove = (e: MouseEvent) => {
   newX = Math.max(0, Math.min(newX, COLS - componentStartPos.value.width))
   newY = Math.max(0, newY)
 
-  // 碰撞检测
-  const newPosition = { x: newX, y: newY, width: componentStartPos.value.width, height: componentStartPos.value.height }
-  const hasCollision = store.checkCollision(newPosition, props.component.id)
-  isColliding.value = hasCollision
+  const newPosition = {
+    x: newX,
+    y: newY,
+    width: componentStartPos.value.width,
+    height: componentStartPos.value.height
+  }
 
-  // 只有没有碰撞时才更新位置
-  if (!hasCollision) {
+  // 先检查是否有碰撞，有则尝试推开
+  const hasCollision = store.checkCollision(newPosition, props.component.id)
+
+  if (hasCollision) {
+    // 尝试推开其他组件
+    const result = store.tryMoveWithPush(props.component.id, newPosition)
+    isPushing.value = result.pushedIds.length > 0
+
+    // 即使推送成功，拖拽组件本身的位置也由 tryMoveWithPush 处理
+    if (!result.success) {
+      // 推送失败，不移动
+      isPushing.value = false
+    }
+  } else {
+    // 无碰撞，直接移动
+    isPushing.value = false
     store.updateComponentPosition(props.component.id, { x: newX, y: newY })
   }
 }
@@ -100,7 +116,7 @@ const onDragMove = (e: MouseEvent) => {
 // 拖拽结束
 const onDragEnd = () => {
   isDraggingSelf.value = false
-  isColliding.value = false
+  isPushing.value = false
   componentStartPos.value = null
   document.removeEventListener('mousemove', onDragMove)
   document.removeEventListener('mouseup', onDragEnd)
@@ -327,7 +343,7 @@ const renderContent = () => {
       selected: isSelected,
       'is-dragging': isDraggingSelf,
       'has-grid': !!gridPosition,
-      'is-colliding': isColliding
+      'is-pushing': isPushing
     }"
     :style="styleObj"
     @click="handleClick"
@@ -396,10 +412,10 @@ const renderContent = () => {
   z-index: 100;
 }
 
-/* 碰撞状态 - 红色边框提示 */
-.renderer-wrapper.is-colliding {
-  outline: 2px dashed #ff4444 !important;
-  background: rgba(255, 68, 68, 0.1);
+/* 推开状态 - 橙色边框提示 */
+.renderer-wrapper.is-pushing {
+  outline: 2px dashed #ff9500 !important;
+  background: rgba(255, 149, 0, 0.1);
 }
 
 /* 内容区加 padding，但图表容器例外 */

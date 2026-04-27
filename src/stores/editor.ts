@@ -111,6 +111,131 @@ export const useEditorStore = defineStore('editor', () => {
     return false
   }
 
+  // 尝试将组件移动到目标位置，如果遇到碰撞则推开其他组件
+  // 返回 { success, pushedIds } - success 表示是否成功（即使推开了组件也算成功）
+  const tryMoveWithPush = (
+    movingId: string,
+    targetPos: GridPosition
+  ): { success: boolean; pushedIds: string[] } => {
+    const COLS = GRID_CONFIG.COLS
+
+    // 记录所有组件当前占据的区域（排除正在移动的组件）
+    const occupiedById = new Map<string, GridPosition>()
+    for (const comp of components.value) {
+      if (comp.id !== movingId && comp.gridPosition) {
+        occupiedById.set(comp.id, { ...comp.gridPosition })
+      }
+    }
+
+    // 检查某位置是否与任何已占用区域重叠（排除指定ID）
+    const collidesWithOccupied = (pos: GridPosition, excludeId?: string): string | null => {
+      for (const [id, occ] of occupiedById) {
+        if (excludeId && id === excludeId) continue
+
+        const noOverlap =
+          pos.x + pos.width <= occ.x ||
+          pos.x >= occ.x + occ.width ||
+          pos.y + pos.height <= occ.y ||
+          pos.y >= occ.y + occ.height
+
+        if (!noOverlap) {
+          return id  // 返回碰撞到的组件ID
+        }
+      }
+      return null
+    }
+
+    // 待处理的队列: [组件ID, 期望位置]
+    const queue: Array<{ id: string; pos: GridPosition }> = []
+    // 记录最终移动映射
+    const moves = new Map<string, GridPosition>()
+
+    // 从移动中的组件开始
+    const movingComp = findComponent(components.value, movingId)
+    if (!movingComp || !movingComp.gridPosition) {
+      return { success: false, pushedIds: [] }
+    }
+    queue.push({ id: movingId, pos: { ...targetPos } })
+
+    // 推送失败时的标记
+    let pushFailed = false
+
+    while (queue.length > 0 && !pushFailed) {
+      const { id, pos } = queue.shift()!
+
+      // 跳过已经在 moves 中且位置不变的组件
+      const existingMove = moves.get(id)
+      if (existingMove && existingMove.x === pos.x && existingMove.y === pos.y) {
+        continue
+      }
+
+      // 边界检查
+      if (pos.x < 0 || pos.y < 0 || pos.x + pos.width > COLS || pos.y + pos.height > 999) {
+        pushFailed = true
+        break
+      }
+
+      // 检查位置是否冲突
+      const colliderId = collidesWithOccupied(pos, existingMove ? undefined : id)
+
+      if (!colliderId) {
+        // 无冲突，记录移动
+        moves.set(id, pos)
+      } else {
+        // 有冲突，计算推送后的新位置
+        const collider = occupiedById.get(colliderId)!
+        let newPos: GridPosition
+
+        // 优先往右推
+        const pushedRight: GridPosition = {
+          x: pos.x + collider.width,
+          y: pos.y,
+          width: collider.width,
+          height: collider.height
+        }
+
+        // 如果右边超出网格，则往下推（回到该行最左）
+        if (pushedRight.x + collider.width > COLS) {
+          newPos = {
+            x: 0,
+            y: pos.y + pos.height,
+            width: collider.width,
+            height: collider.height
+          }
+        } else {
+          newPos = pushedRight
+        }
+
+        // 更新碰撞组件的记录位置
+        occupiedById.set(colliderId, newPos)
+
+        // 把碰撞到的组件加入队列（使用它原来的期望位置还是新位置？）
+        // 用新位置，这样它自己的冲突也能被检测到
+        queue.push({ id: colliderId, pos: newPos })
+
+        // 重新处理当前组件（因为碰撞组件已经移走了）
+        // 但要确保不形成无限循环：检查 moves 中是否有记录且位置变了
+        const currentInMoves = moves.get(id)
+        if (!currentInMoves || currentInMoves.x !== pos.x || currentInMoves.y !== pos.y) {
+          queue.push({ id, pos })
+        }
+      }
+    }
+
+    if (pushFailed || moves.size === 0) {
+      return { success: false, pushedIds: [] }
+    }
+
+    // 批量执行移动
+    for (const [id, pos] of moves) {
+      moveComponentTo(id, pos)
+    }
+
+    // 返回被推开的组件ID（排除移动者自身）
+    const pushedIds = Array.from(moves.keys()).filter(id => id !== movingId)
+    return { success: true, pushedIds }
+  }
+
   // 移动组件到指定网格位置
   const moveComponentTo = (id: string, gridPosition: GridPosition) => {
     const comp = findComponent(components.value, id)
@@ -227,6 +352,7 @@ export const useEditorStore = defineStore('editor', () => {
     setDraggingFromPanel,
     getMaxGridY,
     checkCollision,
+    tryMoveWithPush,
     exportConfig
   }
 })
