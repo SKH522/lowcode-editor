@@ -3,6 +3,7 @@ import { computed, ref, watch, onMounted, onUnmounted, h } from 'vue'
 import { NButton, NInput, NCard } from 'naive-ui'
 import * as echarts from 'echarts'
 import { useEditorStore } from '@/stores/editor'
+import { useEventBus } from '@/composables/useEventBus'
 import type { CanvasComponent, GridPosition } from '@/types/editor'
 import { GRID_CONFIG } from '@/types/editor'
 
@@ -12,6 +13,7 @@ const props = defineProps<{
 }>()
 
 const store = useEditorStore()
+const { emitEvent } = useEventBus()
 const chartRef = ref<HTMLDivElement | null>(null)
 let chartInstance: echarts.ECharts | null = null
 
@@ -32,6 +34,14 @@ const resizeStartSize = ref({ width: 0, height: 0, x: 0, y: 0 })
 // 边缘检测状态
 const resizeEdge = ref<'n' | 's' | 'e' | 'w' | 'ne' | 'nw' | 'se' | 'sw' | null>(null)
 const EDGE_THRESHOLD = 8  // 边缘检测阈值（像素）
+
+// 触发组件事件
+const triggerEvent = (eventName: string, eventData?: any) => {
+  if (store.previewMode) {
+    emitEvent(props.component.id, eventName, eventData)
+    store.triggerBindings(props.component.id, eventName, eventData)
+  }
+}
 
 // 处理点击
 const handleClick = (e: MouseEvent) => {
@@ -445,14 +455,24 @@ const handleResize = () => {
 const renderContent = () => {
   switch (props.component.name) {
     case '按钮':
-      return h(NButton, props.component.props, () => props.component.props.text)
+      return h(NButton, {
+        ...props.component.props,
+        onClick: (e: MouseEvent) => {
+          e.stopPropagation()
+          triggerEvent('click')
+        }
+      }, () => props.component.props.text)
     case '输入框':
       return h('div', { class: 'input-wrapper' }, [
         props.component.props.label && h('label', { class: 'input-label' }, props.component.props.label),
         h('div', { class: 'input-inner' }, [
           h(NInput, {
             ...props.component.props,
-            onClick: (e: MouseEvent) => e.stopPropagation()
+            onClick: (e: MouseEvent) => e.stopPropagation(),
+            onFocus: () => triggerEvent('focus'),
+            onBlur: () => triggerEvent('blur'),
+            onInput: (value: string) => triggerEvent('input', { value }),
+            onChange: (value: string) => triggerEvent('change', { value })
           })
         ])
       ])
@@ -469,11 +489,17 @@ const renderContent = () => {
           display: 'block',
           maxWidth: '100%',
           height: 'auto'
-        }
+        },
+        onClick: () => triggerEvent('click'),
+        onLoad: () => triggerEvent('load'),
+        onError: () => triggerEvent('error')
       })
     case '卡片':
       return h('div', { class: 'card-wrapper' }, [
-        h(NCard, { title: props.component.props.title }, {
+        h(NCard, {
+          title: props.component.props.title,
+          onClick: () => triggerEvent('click')
+        }, {
           default: () => props.component.props.content
         })
       ])

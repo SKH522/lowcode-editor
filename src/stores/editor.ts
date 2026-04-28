@@ -1,7 +1,8 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
-import type { CanvasComponent, EditorState, GridPosition } from '@/types/editor'
+import type { CanvasComponent, EditorState, GridPosition, EventBinding } from '@/types/editor'
 import { COMPONENT_CONFIGS, GRID_CONFIG } from '@/types/editor'
+import { useEventBus } from '@/composables/useEventBus'
 
 // 生成唯一 ID
 const generateId = () => `comp_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`
@@ -15,6 +16,156 @@ export const useEditorStore = defineStore('editor', () => {
   // 网格拖拽相关状态
   const dragOverPosition = ref<GridPosition | null>(null)  // 拖拽悬停的网格位置
   const isDraggingFromPanel = ref(false)  // 是否从面板拖入
+
+  // 事件绑定
+  const eventBindings = ref<EventBinding[]>([])
+  const { emitAction, onAction } = useEventBus()
+
+  // 初始化 action 监听
+  const initActionListener = () => {
+    onAction(({ targetId, action, params, eventData }) => {
+      executeAction(targetId, action, params, eventData)
+    })
+  }
+
+  // 解析参数中的占位符 {{event.xxx}} 为实际事件数据
+  const resolveParams = (params: any, eventData: any): any => {
+    if (!params) return params
+    if (typeof params === 'string') {
+      // 处理字符串参数中的 {{event.xxx}} 占位符
+      const match = params.match(/^\{\{event\.(\w+)\}\}$/)
+      if (match && eventData) {
+        return eventData[match[1]]
+      }
+      return params
+    }
+    if (Array.isArray(params)) {
+      return params.map(p => resolveParams(p, eventData))
+    }
+    if (typeof params === 'object') {
+      const resolved: any = {}
+      for (const key in params) {
+        resolved[key] = resolveParams(params[key], eventData)
+      }
+      return resolved
+    }
+    return params
+  }
+
+  // 执行组件 action
+  const executeAction = (targetId: string, action: string, params?: any, eventData?: any) => {
+    const comp = findComponent(components.value, targetId)
+    if (!comp) return
+
+    // 解析参数中的占位符
+    const resolvedParams = resolveParams(params, eventData)
+
+    switch (action) {
+      case 'show':
+        updateComponentStyles(targetId, { ...comp.styles, display: 'block' })
+        break
+      case 'hide':
+        updateComponentStyles(targetId, { ...comp.styles, display: 'none' })
+        break
+      case 'clear':
+        updateComponentProps(targetId, { value: '' })
+        break
+      case 'focus':
+        // 聚焦逻辑通过事件触发
+        break
+      case 'setValue':
+        updateComponentProps(targetId, { value: resolvedParams?.value })
+        break
+      case 'setText':
+        updateComponentProps(targetId, { content: resolvedParams?.content })
+        break
+      case 'setTitle':
+        updateComponentProps(targetId, { title: resolvedParams?.title })
+        break
+      case 'setContent':
+        updateComponentProps(targetId, { content: resolvedParams?.content })
+        break
+      case 'setSrc':
+        updateComponentProps(targetId, { src: resolvedParams?.src })
+        break
+      case 'setData':
+        if (resolvedParams?.xData) {
+          const xData = parseData(resolvedParams.xData)
+          updateComponentProps(targetId, { xData })
+        }
+        if (resolvedParams?.yData) {
+          const yData = parseData(resolvedParams.yData)
+          updateComponentProps(targetId, { yData })
+        }
+        if (resolvedParams?.data) {
+          try {
+            const data = JSON.parse(resolvedParams.data)
+            updateComponentProps(targetId, { data })
+          } catch (e) {
+            console.error('Failed to parse data:', e)
+          }
+        }
+        break
+    }
+  }
+
+  // 解析逗号分隔的数据
+  const parseData = (str: string): any[] => {
+    if (!str) return []
+    return str.split(',').map(s => s.trim())
+  }
+
+  // 触发事件绑定
+  const triggerBindings = (sourceId: string, eventName: string, eventData?: any) => {
+    const bindings = eventBindings.value.filter(b => b.sourceId === sourceId && b.sourceEvent === eventName)
+    for (const binding of bindings) {
+      // 传递 eventData 用于动态参数替换
+      emitAction(binding.targetId, binding.targetAction, binding.targetParams, eventData)
+    }
+  }
+
+  // 添加事件绑定
+  const addBinding = (binding: Omit<EventBinding, 'id'>) => {
+    const newBinding: EventBinding = {
+      ...binding,
+      id: `binding_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`
+    }
+    eventBindings.value.push(newBinding)
+    return newBinding.id
+  }
+
+  // 移除事件绑定
+  const removeBinding = (bindingId: string) => {
+    const index = eventBindings.value.findIndex(b => b.id === bindingId)
+    if (index !== -1) {
+      eventBindings.value.splice(index, 1)
+    }
+  }
+
+  // 获取组件的绑定列表
+  const getComponentBindings = (componentId: string) => {
+    return eventBindings.value.filter(b => b.sourceId === componentId)
+  }
+
+  // 获取可以作为事件源的组件列表（排除自己）
+  const getAvailableSources = (excludeId?: string) => {
+    return components.value.filter(c => {
+      const config = COMPONENT_CONFIGS[c.type]
+      if (!config?.events?.length) return false
+      if (excludeId && c.id === excludeId) return false
+      return true
+    })
+  }
+
+  // 获取可以作为目标组件的列表
+  const getAvailableTargets = (excludeId?: string) => {
+    return components.value.filter(c => {
+      const config = COMPONENT_CONFIGS[c.type]
+      if (!config?.actions?.length) return false
+      if (excludeId && c.id === excludeId) return false
+      return true
+    })
+  }
 
   // Getters
   const selectedComponent = computed(() => {
@@ -38,9 +189,14 @@ export const useEditorStore = defineStore('editor', () => {
     const config = COMPONENT_CONFIGS[type]
     if (!config) return
 
+    // 统计同类型组件数量，用于生成默认 label
+    const sameTypeCount = components.value.filter(c => c.type === type).length + 1
+
     const newComponent: CanvasComponent = {
       id: generateId(),
+      type,  // 存储英文类型 key
       name: config.name,
+      label: `${config.name}${sameTypeCount}`,  // 默认 label 如"文本1"、"按钮2"
       props: { ...config.defaultProps },
       styles: { ...config.styles },
       children: type === 'container' || type === 'grid' ? [] : undefined,
@@ -318,6 +474,14 @@ export const useEditorStore = defineStore('editor', () => {
     }
   }
 
+  // 更新组件标识
+  const updateComponentLabel = (id: string, label: string) => {
+    const comp = findComponent(components.value, id)
+    if (comp) {
+      comp.label = label
+    }
+  }
+
   const togglePreview = () => {
     previewMode.value = !previewMode.value
     if (previewMode.value) {
@@ -330,8 +494,14 @@ export const useEditorStore = defineStore('editor', () => {
   }
 
   const exportConfig = () => {
-    return JSON.stringify(components.value, null, 2)
+    return JSON.stringify({
+      components: components.value,
+      bindings: eventBindings.value
+    }, null, 2)
   }
+
+  // 初始化
+  initActionListener()
 
   return {
     components,
@@ -341,11 +511,13 @@ export const useEditorStore = defineStore('editor', () => {
     dragOverPosition,
     isDraggingFromPanel,
     selectedComponent,
+    eventBindings,
     addComponent,
     removeComponent,
     selectComponent,
     updateComponentProps,
     updateComponentStyles,
+    updateComponentLabel,
     togglePreview,
     setZoom,
     clearAll,
@@ -357,6 +529,12 @@ export const useEditorStore = defineStore('editor', () => {
     getMaxGridY,
     checkCollision,
     tryMoveWithPush,
-    exportConfig
+    exportConfig,
+    triggerBindings,
+    addBinding,
+    removeBinding,
+    getComponentBindings,
+    getAvailableSources,
+    getAvailableTargets
   }
 })
