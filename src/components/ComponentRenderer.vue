@@ -29,6 +29,10 @@ const resizeDirection = ref<'n' | 's' | 'e' | 'w' | 'ne' | 'nw' | 'se' | 'sw' | 
 const resizeStartPos = ref({ x: 0, y: 0 })
 const resizeStartSize = ref({ width: 0, height: 0, x: 0, y: 0 })
 
+// 边缘检测状态
+const resizeEdge = ref<'n' | 's' | 'e' | 'w' | 'ne' | 'nw' | 'se' | 'sw' | null>(null)
+const EDGE_THRESHOLD = 8  // 边缘检测阈值（像素）
+
 // 处理点击
 const handleClick = (e: MouseEvent) => {
   e.stopPropagation()
@@ -54,6 +58,12 @@ const positionInfo = computed(() => {
 const onDragStart = (e: MouseEvent) => {
   if (store.previewMode) return
   e.stopPropagation()
+
+  // 如果在边缘，启动 resize 而不是拖拽
+  if (resizeEdge.value && isSelected.value) {
+    onEdgeResizeStart(e)
+    return
+  }
 
   isDraggingSelf.value = true
   dragStartPos.value = { x: e.clientX, y: e.clientY }
@@ -148,6 +158,12 @@ const onResizeStart = (e: MouseEvent, direction: 'n' | 's' | 'e' | 'w' | 'ne' | 
   document.addEventListener('mouseup', onResizeEnd)
 }
 
+// 开始边缘拖拽 resize
+const onEdgeResizeStart = (e: MouseEvent) => {
+  if (!resizeEdge.value) return
+  onResizeStart(e, resizeEdge.value)
+}
+
 const onResizeMove = (e: MouseEvent) => {
   if (!isResizing.value || !props.gridPosition || !resizeDirection.value) return
 
@@ -206,6 +222,13 @@ const onResizeMove = (e: MouseEvent) => {
   const newPos = { x: newX, y: newY, width: newWidth, height: newHeight }
   if (!store.checkCollision(newPos, props.component.id)) {
     store.updateComponentPosition(props.component.id, { x: newX, y: newY, width: newWidth, height: newHeight })
+
+    // 图表组件 resize 时同步缩放图表
+    if (chartInstance && ['折线图', '柱状图', '饼图', '散点图', '仪表盘'].includes(props.component.name)) {
+      requestAnimationFrame(() => {
+        chartInstance?.resize()
+      })
+    }
   }
 }
 
@@ -214,6 +237,39 @@ const onResizeEnd = () => {
   resizeDirection.value = null
   document.removeEventListener('mousemove', onResizeMove)
   document.removeEventListener('mouseup', onResizeEnd)
+}
+
+// 边缘检测
+const onMouseMove = (e: MouseEvent) => {
+  if (store.previewMode || !isSelected.value || isResizing.value) return
+
+  const target = e.currentTarget as HTMLElement
+  const rect = target.getBoundingClientRect()
+  const x = e.clientX - rect.left
+  const y = e.clientY - rect.top
+  const w = rect.width
+  const h = rect.height
+
+  let edge: 'n' | 's' | 'e' | 'w' | 'ne' | 'nw' | 'se' | 'sw' | null = null
+
+  // 检测角落
+  if (x < EDGE_THRESHOLD && y < EDGE_THRESHOLD) edge = 'nw'
+  else if (x > w - EDGE_THRESHOLD && y < EDGE_THRESHOLD) edge = 'ne'
+  else if (x < EDGE_THRESHOLD && y > h - EDGE_THRESHOLD) edge = 'sw'
+  else if (x > w - EDGE_THRESHOLD && y > h - EDGE_THRESHOLD) edge = 'se'
+  // 检测边缘
+  else if (y < EDGE_THRESHOLD) edge = 'n'
+  else if (y > h - EDGE_THRESHOLD) edge = 's'
+  else if (x < EDGE_THRESHOLD) edge = 'w'
+  else if (x > w - EDGE_THRESHOLD) edge = 'e'
+
+  resizeEdge.value = edge
+}
+
+const onMouseLeave = () => {
+  if (!isResizing.value) {
+    resizeEdge.value = null
+  }
 }
 
 // 初始化图表
@@ -393,10 +449,12 @@ const renderContent = () => {
     case '输入框':
       return h('div', { class: 'input-wrapper' }, [
         props.component.props.label && h('label', { class: 'input-label' }, props.component.props.label),
-        h(NInput, {
-          ...props.component.props,
-          onClick: (e: MouseEvent) => e.stopPropagation()
-        })
+        h('div', { class: 'input-inner' }, [
+          h(NInput, {
+            ...props.component.props,
+            onClick: (e: MouseEvent) => e.stopPropagation()
+          })
+        ])
       ])
     case '文本':
       return h('div', {
@@ -407,13 +465,18 @@ const renderContent = () => {
       return h('img', {
         src: props.component.props.src,
         alt: props.component.props.alt,
-        width: props.component.props.width,
-        style: { display: 'block' }
+        style: {
+          display: 'block',
+          maxWidth: '100%',
+          height: 'auto'
+        }
       })
     case '卡片':
-      return h(NCard, { title: props.component.props.title }, {
-        default: () => props.component.props.content
-      })
+      return h('div', { class: 'card-wrapper' }, [
+        h(NCard, { title: props.component.props.title }, {
+          default: () => props.component.props.content
+        })
+      ])
     // ECharts 图表组件
     case '折线图':
     case '柱状图':
@@ -438,14 +501,29 @@ const renderContent = () => {
       'is-dragging': isDraggingSelf,
       'is-resizing': isResizing,
       'has-grid': !!gridPosition,
-      'is-pushing': isPushing
+      'is-pushing': isPushing,
+      'resize-n': resizeEdge === 'n',
+      'resize-s': resizeEdge === 's',
+      'resize-e': resizeEdge === 'e',
+      'resize-w': resizeEdge === 'w',
+      'resize-nw': resizeEdge === 'nw',
+      'resize-ne': resizeEdge === 'ne',
+      'resize-sw': resizeEdge === 'sw',
+      'resize-se': resizeEdge === 'se'
     }"
     :style="styleObj"
     @click="handleClick"
     @mousedown="onDragStart"
+    @mousemove="onMouseMove"
+    @mouseleave="onMouseLeave"
   >
-    <!-- 选中高亮边框 -->
-    <div v-if="isSelected" class="selection-border"></div>
+    <!-- 四角 L 形线条 -->
+    <template v-if="isSelected && !store.previewMode && gridPosition">
+      <div class="corner-line corner-tl"></div>
+      <div class="corner-line corner-tr"></div>
+      <div class="corner-line corner-bl"></div>
+      <div class="corner-line corner-br"></div>
+    </template>
 
     <!-- 删除按钮 -->
     <button
@@ -455,20 +533,6 @@ const renderContent = () => {
     >
       ✕
     </button>
-
-    <!-- Resize 手柄 -->
-    <template v-if="isSelected && !store.previewMode && gridPosition">
-      <!-- 四角手柄 -->
-      <div class="resize-handle resize-nw" @mousedown.stop="onResizeStart($event, 'nw')"></div>
-      <div class="resize-handle resize-ne" @mousedown.stop="onResizeStart($event, 'ne')"></div>
-      <div class="resize-handle resize-sw" @mousedown.stop="onResizeStart($event, 'sw')"></div>
-      <div class="resize-handle resize-se" @mousedown.stop="onResizeStart($event, 'se')"></div>
-      <!-- 四边手柄 -->
-      <div class="resize-handle resize-n" @mousedown.stop="onResizeStart($event, 'n')"></div>
-      <div class="resize-handle resize-s" @mousedown.stop="onResizeStart($event, 's')"></div>
-      <div class="resize-handle resize-w" @mousedown.stop="onResizeStart($event, 'w')"></div>
-      <div class="resize-handle resize-e" @mousedown.stop="onResizeStart($event, 'e')"></div>
-    </template>
 
     <!-- 拖拽手柄提示 -->
     <div v-if="!store.previewMode && gridPosition" class="drag-handle">
@@ -511,7 +575,8 @@ const renderContent = () => {
 }
 
 .renderer-wrapper.selected {
-  outline: 2px solid var(--accent);
+  outline: 2px dashed var(--accent);
+  outline-offset: 2px;
 }
 
 .renderer-wrapper.is-dragging {
@@ -543,6 +608,7 @@ const renderContent = () => {
   flex: 1;
   width: 100%;
   height: 100%;
+  min-height: 0;  /* 重要：允许flex item收缩 */
 }
 
 /* 选中边框 - 叠加在组件上层 */
@@ -557,10 +623,10 @@ const renderContent = () => {
 /* 删除按钮 */
 .delete-btn {
   position: absolute;
-  top: -10px;
-  right: -10px;
-  width: 24px;
-  height: 24px;
+  top: -12px;
+  right: -12px;
+  width: 22px;
+  height: 22px;
   background: var(--accent);
   color: white;
   border: none;
@@ -569,9 +635,9 @@ const renderContent = () => {
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 14px;
+  font-size: 12px;
   line-height: 1;
-  z-index: 10;
+  z-index: 30;
   transition: transform 0.15s;
 }
 
@@ -579,104 +645,59 @@ const renderContent = () => {
   transform: scale(1.1);
 }
 
-/* Resize 手柄样式 */
-.resize-handle {
-  position: absolute;
-  background: var(--accent);
-  border: 2px solid white;
-  border-radius: 50%;
-  z-index: 20;
-  opacity: 0;
-  transition: opacity 0.15s, transform 0.15s;
+/* 边缘 resize 光标 */
+.renderer-wrapper.resize-nw,
+.renderer-wrapper.resize-ne,
+.renderer-wrapper.resize-sw,
+.renderer-wrapper.resize-se {
+  cursor: nwse-resize;
 }
 
-.renderer-wrapper.selected .resize-handle {
-  opacity: 1;
-}
-
-.resize-handle:hover {
-  transform: scale(1.2);
-  background: #e94560;
-}
-
-/* 四角手柄 */
-.resize-nw {
-  width: 12px;
-  height: 12px;
-  top: -6px;
-  left: -6px;
-  cursor: nw-resize;
-}
-
-.resize-ne {
-  width: 12px;
-  height: 12px;
-  top: -6px;
-  right: -6px;
-  cursor: ne-resize;
-}
-
-.resize-sw {
-  width: 12px;
-  height: 12px;
-  bottom: -6px;
-  left: -6px;
-  cursor: sw-resize;
-}
-
-.resize-se {
-  width: 12px;
-  height: 12px;
-  bottom: -6px;
-  right: -6px;
-  cursor: se-resize;
-}
-
-/* 四边手柄 - 条形 */
-.resize-n,
-.resize-s {
-  width: 24px;
-  height: 8px;
-  left: 50%;
-  transform: translateX(-50%);
-  border-radius: 4px;
+.renderer-wrapper.resize-n,
+.renderer-wrapper.resize-s {
   cursor: ns-resize;
 }
 
-.resize-n {
-  top: -4px;
-}
-
-.resize-s {
-  bottom: -4px;
-}
-
-.resize-n:hover,
-.resize-s:hover {
-  transform: translateX(-50%) scale(1.1);
-}
-
-.resize-e,
-.resize-w {
-  width: 8px;
-  height: 24px;
-  top: 50%;
-  transform: translateY(-50%);
-  border-radius: 4px;
+.renderer-wrapper.resize-e,
+.renderer-wrapper.resize-w {
   cursor: ew-resize;
 }
 
-.resize-e {
-  right: -4px;
+/* 四角 L 形线条 */
+.corner-line {
+  position: absolute;
+  width: 12px;
+  height: 12px;
+  pointer-events: none;
+  z-index: 3;
 }
 
-.resize-w {
-  left: -4px;
+.corner-tl {
+  top: -1px;
+  left: -1px;
+  border-top: 2px solid var(--accent);
+  border-left: 2px solid var(--accent);
 }
 
-.resize-e:hover,
-.resize-w:hover {
-  transform: translateY(-50%) scale(1.1);
+.corner-tr {
+  top: -1px;
+  right: -1px;
+  border-top: 2px solid var(--accent);
+  border-right: 2px solid var(--accent);
+}
+
+.corner-bl {
+  bottom: -1px;
+  left: -1px;
+  border-bottom: 2px solid var(--accent);
+  border-left: 2px solid var(--accent);
+}
+
+.corner-br {
+  bottom: -1px;
+  right: -1px;
+  border-bottom: 2px solid var(--accent);
+  border-right: 2px solid var(--accent);
 }
 
 /* 拖拽手柄 */
@@ -742,15 +763,68 @@ const renderContent = () => {
   display: flex;
   flex-direction: column;
   gap: 4px;
+  flex: 1;
+  min-width: 0;
+  width: 100%;
+  overflow: hidden;
+}
+
+.input-inner {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.input-inner :deep(.n-input) {
+  width: 100%;
+  min-width: 0;
+}
+
+.input-inner :deep(.n-input-wrapper) {
+  width: 100%;
+  min-width: 0;
 }
 
 .input-label {
   font-size: 12px;
   color: #666;
+  flex-shrink: 0;
 }
 
 /* 文本内容 */
 .text-content {
+  word-break: break-word;
+  flex: 1;
+  min-width: 0;
+  width: 100%;
+  overflow: hidden;
+}
+
+/* 卡片容器 */
+.card-wrapper {
+  flex: 1;
+  min-width: 0;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.card-wrapper :deep(.n-card) {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.card-wrapper :deep(.n-card__content) {
+  flex: 1;
+  overflow: hidden;
+  min-height: 0;
+}
+
+.card-wrapper :deep(.n-card__content-inner) {
+  overflow: hidden;
   word-break: break-word;
 }
 
