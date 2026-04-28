@@ -19,10 +19,15 @@ const isSelected = computed(() => store.selectedId === props.component.id)
 
 // 拖拽状态
 const isDraggingSelf = ref(false)
-const isResizing = ref(false)
 const isPushing = ref(false)  // 是否在推开其他组件
 const dragStartPos = ref({ x: 0, y: 0 })
 const componentStartPos = ref<GridPosition | null>(null)
+
+// Resize 状态
+const isResizing = ref(false)
+const resizeDirection = ref<'n' | 's' | 'e' | 'w' | 'ne' | 'nw' | 'se' | 'sw' | null>(null)
+const resizeStartPos = ref({ x: 0, y: 0 })
+const resizeStartSize = ref({ width: 0, height: 0, x: 0, y: 0 })
 
 // 处理点击
 const handleClick = (e: MouseEvent) => {
@@ -120,6 +125,95 @@ const onDragEnd = () => {
   componentStartPos.value = null
   document.removeEventListener('mousemove', onDragMove)
   document.removeEventListener('mouseup', onDragEnd)
+}
+
+// ============ Resize 处理 ============
+
+const onResizeStart = (e: MouseEvent, direction: 'n' | 's' | 'e' | 'w' | 'ne' | 'nw' | 'se' | 'sw') => {
+  if (store.previewMode || !props.gridPosition) return
+  e.stopPropagation()
+  e.preventDefault()
+
+  isResizing.value = true
+  resizeDirection.value = direction
+  resizeStartPos.value = { x: e.clientX, y: e.clientY }
+  resizeStartSize.value = {
+    width: props.gridPosition.width,
+    height: props.gridPosition.height,
+    x: props.gridPosition.x,
+    y: props.gridPosition.y
+  }
+
+  document.addEventListener('mousemove', onResizeMove)
+  document.addEventListener('mouseup', onResizeEnd)
+}
+
+const onResizeMove = (e: MouseEvent) => {
+  if (!isResizing.value || !props.gridPosition || !resizeDirection.value) return
+
+  const COLS = GRID_CONFIG.COLS
+  const ROW_HEIGHT = GRID_CONFIG.ROW_HEIGHT
+
+  const canvasEl = document.querySelector('.components-grid')
+  if (!canvasEl) return
+
+  const rect = canvasEl.getBoundingClientRect()
+  const cellWidth = rect.width / COLS
+
+  const deltaX = e.clientX - resizeStartPos.value.x
+  const deltaY = e.clientY - resizeStartPos.value.y
+
+  const gridDeltaX = Math.round(deltaX / cellWidth)
+  const gridDeltaY = Math.round(deltaY / ROW_HEIGHT)
+
+  const start = resizeStartSize.value
+  let newX = start.x
+  let newY = start.y
+  let newWidth = start.width
+  let newHeight = start.height
+
+  const dir = resizeDirection.value
+
+  // 根据方向调整尺寸
+  if (dir.includes('e')) {
+    // 右边：增加宽度
+    newWidth = Math.max(1, start.width + gridDeltaX)
+  }
+  if (dir.includes('w')) {
+    // 左边：减少宽度，移动 x
+    const widthChange = Math.min(gridDeltaX, start.width - 1)
+    newWidth = start.width - widthChange
+    newX = start.x + widthChange
+  }
+  if (dir.includes('s')) {
+    // 下边：增加高度
+    newHeight = Math.max(1, start.height + gridDeltaY)
+  }
+  if (dir.includes('n')) {
+    // 上边：减少高度，移动 y
+    const heightChange = Math.min(gridDeltaY, start.height - 1)
+    newHeight = start.height - heightChange
+    newY = start.y + heightChange
+  }
+
+  // 边界检查
+  newX = Math.max(0, newX)
+  newY = Math.max(0, newY)
+  newWidth = Math.min(newWidth, COLS - newX)
+  newHeight = Math.max(1, newHeight)
+
+  // 检查碰撞
+  const newPos = { x: newX, y: newY, width: newWidth, height: newHeight }
+  if (!store.checkCollision(newPos, props.component.id)) {
+    store.updateComponentPosition(props.component.id, { x: newX, y: newY, width: newWidth, height: newHeight })
+  }
+}
+
+const onResizeEnd = () => {
+  isResizing.value = false
+  resizeDirection.value = null
+  document.removeEventListener('mousemove', onResizeMove)
+  document.removeEventListener('mouseup', onResizeEnd)
 }
 
 // 初始化图表
@@ -342,6 +436,7 @@ const renderContent = () => {
     :class="{
       selected: isSelected,
       'is-dragging': isDraggingSelf,
+      'is-resizing': isResizing,
       'has-grid': !!gridPosition,
       'is-pushing': isPushing
     }"
@@ -360,6 +455,20 @@ const renderContent = () => {
     >
       ✕
     </button>
+
+    <!-- Resize 手柄 -->
+    <template v-if="isSelected && !store.previewMode && gridPosition">
+      <!-- 四角手柄 -->
+      <div class="resize-handle resize-nw" @mousedown.stop="onResizeStart($event, 'nw')"></div>
+      <div class="resize-handle resize-ne" @mousedown.stop="onResizeStart($event, 'ne')"></div>
+      <div class="resize-handle resize-sw" @mousedown.stop="onResizeStart($event, 'sw')"></div>
+      <div class="resize-handle resize-se" @mousedown.stop="onResizeStart($event, 'se')"></div>
+      <!-- 四边手柄 -->
+      <div class="resize-handle resize-n" @mousedown.stop="onResizeStart($event, 'n')"></div>
+      <div class="resize-handle resize-s" @mousedown.stop="onResizeStart($event, 's')"></div>
+      <div class="resize-handle resize-w" @mousedown.stop="onResizeStart($event, 'w')"></div>
+      <div class="resize-handle resize-e" @mousedown.stop="onResizeStart($event, 'e')"></div>
+    </template>
 
     <!-- 拖拽手柄提示 -->
     <div v-if="!store.previewMode && gridPosition" class="drag-handle">
@@ -410,6 +519,11 @@ const renderContent = () => {
   cursor: grabbing;
   outline: 2px dashed #e94560 !important;
   z-index: 100;
+}
+
+.renderer-wrapper.is-resizing {
+  cursor: default;
+  user-select: none;
 }
 
 /* 推开状态 - 橙色边框提示 */
@@ -463,6 +577,106 @@ const renderContent = () => {
 
 .delete-btn:hover {
   transform: scale(1.1);
+}
+
+/* Resize 手柄样式 */
+.resize-handle {
+  position: absolute;
+  background: var(--accent);
+  border: 2px solid white;
+  border-radius: 50%;
+  z-index: 20;
+  opacity: 0;
+  transition: opacity 0.15s, transform 0.15s;
+}
+
+.renderer-wrapper.selected .resize-handle {
+  opacity: 1;
+}
+
+.resize-handle:hover {
+  transform: scale(1.2);
+  background: #e94560;
+}
+
+/* 四角手柄 */
+.resize-nw {
+  width: 12px;
+  height: 12px;
+  top: -6px;
+  left: -6px;
+  cursor: nw-resize;
+}
+
+.resize-ne {
+  width: 12px;
+  height: 12px;
+  top: -6px;
+  right: -6px;
+  cursor: ne-resize;
+}
+
+.resize-sw {
+  width: 12px;
+  height: 12px;
+  bottom: -6px;
+  left: -6px;
+  cursor: sw-resize;
+}
+
+.resize-se {
+  width: 12px;
+  height: 12px;
+  bottom: -6px;
+  right: -6px;
+  cursor: se-resize;
+}
+
+/* 四边手柄 - 条形 */
+.resize-n,
+.resize-s {
+  width: 24px;
+  height: 8px;
+  left: 50%;
+  transform: translateX(-50%);
+  border-radius: 4px;
+  cursor: ns-resize;
+}
+
+.resize-n {
+  top: -4px;
+}
+
+.resize-s {
+  bottom: -4px;
+}
+
+.resize-n:hover,
+.resize-s:hover {
+  transform: translateX(-50%) scale(1.1);
+}
+
+.resize-e,
+.resize-w {
+  width: 8px;
+  height: 24px;
+  top: 50%;
+  transform: translateY(-50%);
+  border-radius: 4px;
+  cursor: ew-resize;
+}
+
+.resize-e {
+  right: -4px;
+}
+
+.resize-w {
+  left: -4px;
+}
+
+.resize-e:hover,
+.resize-w:hover {
+  transform: translateY(-50%) scale(1.1);
 }
 
 /* 拖拽手柄 */
