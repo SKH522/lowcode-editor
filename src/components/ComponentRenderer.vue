@@ -457,9 +457,17 @@ const renderContent = () => {
     case '按钮':
       return h(NButton, {
         ...props.component.props,
+        style: {
+          backgroundColor: props.component.styles.backgroundColor || '#e94560',
+          color: props.component.styles.color || '#ffffff',
+          borderColor: props.component.styles.borderColor || '#e94560'
+        },
         onClick: (e: MouseEvent) => {
-          e.stopPropagation()
-          triggerEvent('click')
+          // 只在预览模式下阻止冒泡和触发事件，编辑模式下允许选中
+          if (store.previewMode) {
+            e.stopPropagation()
+            triggerEvent('click')
+          }
         }
       }, () => props.component.props.text)
     case '输入框':
@@ -478,7 +486,8 @@ const renderContent = () => {
       ])
     case '文本':
       return h('div', {
-        style: { textAlign: props.component.props.align },
+        ...styleObj.value,  // 合并组件样式（包含 color 和 placeholderColor）
+        textAlign: props.component.props.align,
         class: 'text-content'
       }, props.component.props.content)
     case '图片':
@@ -492,13 +501,19 @@ const renderContent = () => {
         },
         onClick: () => triggerEvent('click'),
         onLoad: () => triggerEvent('load'),
-        onError: () => triggerEvent('error')
+        onError: () => triggerEvent('error'),
+        onDragstart: (e: DragEvent) => e.preventDefault()  // 阻止图片默认拖拽行为
       })
     case '卡片':
       return h('div', { class: 'card-wrapper' }, [
         h(NCard, {
           title: props.component.props.title,
-          onClick: () => triggerEvent('click')
+          onClick: () => {
+            // 只在预览模式下触发事件
+            if (store.previewMode) {
+              triggerEvent('click')
+            }
+          }
         }, {
           default: () => props.component.props.content
         })
@@ -859,5 +874,21 @@ const renderContent = () => {
   width: 100%;
   height: 100%;
   min-height: 120px;
+}
+
+/* 按钮动画 */
+.renderer-wrapper :deep(.n-button) {
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
+  cursor: pointer;
+}
+
+.renderer-wrapper :deep(.n-button:hover) {
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(233, 69, 96, 0.4);
+}
+
+.renderer-wrapper :deep(.n-button:active) {
+  transform: scale(1.05);
+  box-shadow: 0 2px 8px rgba(233, 69, 96, 0.3);
 }
 </style>

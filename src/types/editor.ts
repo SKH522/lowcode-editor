@@ -88,7 +88,14 @@ export const COMPONENT_CONFIGS: Record<string, ComponentConfig> = {
     name: '按钮',
     icon: '🔘',
     defaultProps: { text: '按钮', type: 'primary' },
-    styles: { padding: '8px 24px', fontSize: '14px' },
+    styles: {
+      padding: '8px 24px',
+      fontSize: '14px',
+      backgroundColor: '#e94560',
+      color: '#ffffff',
+      border: '1px solid #e94560',
+      borderRadius: '4px'
+    },
     gridSize: { width: 2, height: 1 },
     events: ['click', 'mouseenter', 'mouseleave']
   },
@@ -97,7 +104,7 @@ export const COMPONENT_CONFIGS: Record<string, ComponentConfig> = {
     icon: '✏️',
     defaultProps: { placeholder: '请输入...', label: '标签' },
     styles: { padding: '8px 12px', fontSize: '14px' },
-    gridSize: { width: 4, height: 1 },
+    gridSize: { width: 3, height: 2 },
     events: ['focus', 'blur', 'change', 'input'],
     actions: [
       { name: 'clear', label: '清空内容' },
@@ -109,7 +116,11 @@ export const COMPONENT_CONFIGS: Record<string, ComponentConfig> = {
     name: '文本',
     icon: '📝',
     defaultProps: { content: '这是一段文本', align: 'left' },
-    styles: { fontSize: '14px', color: '#333333' },
+    styles: {
+      fontSize: '14px',
+      color: '#ffffff',
+      placeholderColor: '#999999'
+    },
     gridSize: { width: 6, height: 1 },
     actions: [
       { name: 'setText', label: '设置文本', params: [{ name: 'content', label: '文本内容', type: 'string' }] }
